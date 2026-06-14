@@ -9,7 +9,7 @@ from torchvision.transforms import (
     RandomCrop, RandomHorizontalFlip, RandomVerticalFlip,
 )
 
-from data.underwater_datasets import (
+from data.UWIRdataset import (
     UIEBDataset,
     EUVPDataset,
     UFO120Dataset,

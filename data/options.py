@@ -73,20 +73,24 @@ def option():
     # Model / ablation variant
     # ------------------------------------------------------------------
     parser.add_argument('--model', type=str, default='unet_5ch',
-                        choices=['unet_3ch', 'unet_4ch_t', 'unet_4ch_b', 'unet_5ch',
-                                 'unetpp_5ch', 'swinunet_5ch'],
+                        choices=[
+                            # U-Net (no pretrained encoder)
+                            'unet_3ch', 'unet_4ch_t', 'unet_4ch_b', 'unet_5ch',
+                            # ResNet-50 encoder
+                            'resnet_3ch', 'resnet_4ch_t', 'resnet_4ch_b', 'resnet_5ch',
+                            # MobileNetV3-Large encoder
+                            'mobilenet_3ch', 'mobilenet_4ch_t', 'mobilenet_4ch_b', 'mobilenet_5ch',
+                        ],
                         help=(
-                            'Model variant for ablation study (proposal §4.4):\n'
-                            '  unet_3ch      — RGB-only U-Net baseline\n'
-                            '  unet_4ch_t    — RGB + transmission map\n'
-                            '  unet_4ch_b    — RGB + background light\n'
-                            '  unet_5ch      — RGB + t(x) + B  (full model)\n'
-                            '  unetpp_5ch    — U-Net++ with 5-ch input\n'
-                            '  swinunet_5ch  — Swin U-Net with 5-ch input'
+                            'Model variant (backbone_channels):\n'
+                            '  Channels: 3ch=RGB only | 4ch_t=RGB+t(x) | 4ch_b=RGB+B | 5ch=RGB+t(x)+B\n'
+                            '  Backbones: unet | resnet (ResNet-50) | mobilenet (MobileNetV3-Large)'
                         ))
+    parser.add_argument('--pretrained_backbone', type=_str2bool, default=True,
+                        help='Load ImageNet-pretrained weights for ResNet / MobileNet encoders')
     parser.add_argument('--backbone', type=str, default='unet',
-                        choices=['unet', 'unetpp', 'swinunet'],
-                        help='Refinement backbone architecture')
+                        choices=['unet', 'resnet', 'mobilenet'],
+                        help='Refinement backbone architecture (inferred from --model if unset)')
 
     # ------------------------------------------------------------------
     # Loss weights  λ1·L_pixel + λ2·L_perceptual + λ3·L_SSIM

@@ -25,7 +25,8 @@ from data.scheduler import (
     CosineAnnealingRestartLR,
     CosineAnnealingRestartCyclicLR,
 )
-from net import UNet5ch, compute_physics_maps
+from net import compute_physics_maps
+from net.registry import build_model, parse_model_variant
 from loss import CompositeLoss
 from measure_underwater import evaluate_loader
 
@@ -34,45 +35,63 @@ from measure_underwater import evaluate_loader
 # Physics pre-processing collate helper
 # ============================================================
 
-def _to_5ch(rgb_tensor: torch.Tensor) -> torch.Tensor:
+def _add_physics_channels(rgb_tensor: torch.Tensor, mode: str) -> torch.Tensor:
     """
-    Append two physics channels (transmission map + background light) to an
-    RGB tensor, producing a 5-channel tensor.
+    Append physics-derived channels to an RGB tensor.
 
     Args:
         rgb_tensor (Tensor): (3, H, W) float32 in [0, 1].
+        mode       (str):    Which channels to append:
+                               ``"none"`` → return as-is           (3-ch)
+                               ``"t"``    → append t(x)            (4-ch)
+                               ``"b"``    → append B_map           (4-ch)
+                               ``"tb"``   → append t(x) and B_map  (5-ch)
 
     Returns:
-        Tensor: (5, H, W) float32.
+        Tensor: (C_out, H, W) where C_out ∈ {3, 4, 5}.
     """
+    if mode == "none":
+        return rgb_tensor
+
     img_np = rgb_tensor.permute(1, 2, 0).numpy().astype(np.float32)
     t_map, b_map = compute_physics_maps(img_np)
-    t_t = torch.from_numpy(t_map).unsqueeze(0)   # (1, H, W)
-    b_t = torch.from_numpy(b_map).unsqueeze(0)   # (1, H, W)
-    return torch.cat([rgb_tensor, t_t, b_t], dim=0)  # (5, H, W)
+
+    if mode == "t":
+        t_t = torch.from_numpy(t_map).unsqueeze(0)   # (1, H, W)
+        return torch.cat([rgb_tensor, t_t], dim=0)    # (4, H, W)
+
+    if mode == "b":
+        b_t = torch.from_numpy(b_map).unsqueeze(0)   # (1, H, W)
+        return torch.cat([rgb_tensor, b_t], dim=0)    # (4, H, W)
+
+    if mode == "tb":
+        t_t = torch.from_numpy(t_map).unsqueeze(0)   # (1, H, W)
+        b_t = torch.from_numpy(b_map).unsqueeze(0)   # (1, H, W)
+        return torch.cat([rgb_tensor, t_t, b_t], dim=0)  # (5, H, W)
+
+    raise ValueError(f"Unknown physics mode: '{mode}'")
 
 
-def _collate_train(batch, use_physics: bool):
+def _collate_train(batch, physics_mode: str):
     """
     Custom collate that:
       - Drops the filename strings returned by the dataset.
-      - Optionally extends inp to 5 channels with physics maps.
+      - Appends physics channels according to ``physics_mode``.
 
     Dataset items are (inp_tensor, gt_tensor, fname_in, fname_gt).
     """
     inps = []
     gts  = []
     for inp, gt, *_ in batch:
-        if use_physics:
-            inp = _to_5ch(inp)
+        inp = _add_physics_channels(inp, physics_mode)
         inps.append(inp)
         gts.append(gt)
     return torch.stack(inps), torch.stack(gts)
 
 
-def _collate_val(batch, use_physics: bool):
+def _collate_val(batch, physics_mode: str):
     """Same as _collate_train but for validation paired datasets."""
-    return _collate_train(batch, use_physics)
+    return _collate_train(batch, physics_mode)
 
 
 # ============================================================
@@ -228,22 +247,21 @@ def main():
         torch.autograd.set_detect_anomaly(True)
 
     # ------------------------------------------------------------------
-    # Determine input channels
+    # Determine input channels and physics mode from model name
     # ------------------------------------------------------------------
-    use_physics  = args.model in ("unet_5ch", "unetpp_5ch", "swinunet_5ch")
-    in_channels  = 5 if use_physics else 3
+    _, in_channels, physics_mode = parse_model_variant(args.model)
 
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model = UNet5ch(in_channels=in_channels).to(device)
-    print(f"Model     : {args.model}  (in_channels={in_channels})")
+    model = build_model(args.model, pretrained_backbone=args.pretrained_backbone).to(device)
+    print(f"Model     : {args.model}  (in_channels={in_channels}, physics={physics_mode})")
 
     # ------------------------------------------------------------------
     # Datasets & DataLoaders
     # ------------------------------------------------------------------
-    collate_fn_train = lambda b: _collate_train(b, use_physics)
-    collate_fn_val   = lambda b: _collate_val(b, use_physics)
+    collate_fn_train = lambda b: _collate_train(b, physics_mode)
+    collate_fn_val   = lambda b: _collate_val(b, physics_mode)
 
     # Training dataset
     if args.dataset == "euvp":

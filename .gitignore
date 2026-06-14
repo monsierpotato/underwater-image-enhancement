@@ -1,0 +1,18 @@
+# IDE
+.idea/
+
+# Checkpoints & run outputs
+checkpoints/
+results/
+output/
+weights/
+
+# Python
+__pycache__/
+*.pyc
+*.pth
+*.egg-info/
+.venv/
+
+# Datasets (too large for version control)
+datasets/

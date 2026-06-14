@@ -1,0 +1,28 @@
+# ============================================================
+# requirements.txt  –  Underwater Image Enhancement
+# Install with: pip install -r requirements.txt
+#
+# PyTorch (CUDA 12.1): uncomment the torch block below and
+# comment out the plain `torch` line, OR install manually:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# ============================================================
+
+# --- Core deep learning ---
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+
+# --- Scientific computing ---
+numpy>=1.24.0
+scipy>=1.11.0
+
+# --- Image processing ---
+opencv-python>=4.8.0
+Pillow>=10.0.0
+scikit-image>=0.21.0
+
+# --- Loss / metrics ---
+kornia>=0.7.0
+
+# --- Profiling ---
+thop>=0.1.1
