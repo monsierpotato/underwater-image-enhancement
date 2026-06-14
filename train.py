@@ -3,34 +3,76 @@
 # ============================================================
 
 import json
+import os
 import time
+from datetime import datetime
 
 import torch
 import torch.nn as nn
+import torch.utils.data as data
+import numpy as np
 
-from config import cfg          # adjust import path as needed
-from dataset import train_loader, val_loader
-from model import model
-from loss import criterion
-from measure import evaluate_loader
+from data.options import option
+from data.data import (
+    get_euvp_training_set,
+    get_uieb_training_set,
+    get_ufo120_training_set,
+    get_euvp_eval_set,
+    get_uieb_eval_set,
+)
+from data.scheduler import (
+    GradualWarmupScheduler,
+    CosineAnnealingRestartLR,
+    CosineAnnealingRestartCyclicLR,
+)
+from net import UNet5ch, compute_physics_maps
+from loss import CompositeLoss
+from measure_underwater import evaluate_loader
 
 
 # ============================================================
-# Optimizer & Scheduler
+# Physics pre-processing collate helper
 # ============================================================
 
-optimizer = torch.optim.Adam(
-    model.parameters(),
-    lr           = cfg.LR,
-    weight_decay = cfg.WEIGHT_DECAY,
-)
-scheduler = torch.optim.lr_scheduler.StepLR(
-    optimizer,
-    step_size = cfg.SCHEDULER_STEP,
-    gamma     = cfg.SCHEDULER_GAMMA,
-)
-print(f"Optimizer : Adam  (lr={cfg.LR}, wd={cfg.WEIGHT_DECAY})")
-print(f"Scheduler : StepLR  (step={cfg.SCHEDULER_STEP}, γ={cfg.SCHEDULER_GAMMA})")
+def _to_5ch(rgb_tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Append two physics channels (transmission map + background light) to an
+    RGB tensor, producing a 5-channel tensor.
+
+    Args:
+        rgb_tensor (Tensor): (3, H, W) float32 in [0, 1].
+
+    Returns:
+        Tensor: (5, H, W) float32.
+    """
+    img_np = rgb_tensor.permute(1, 2, 0).numpy().astype(np.float32)
+    t_map, b_map = compute_physics_maps(img_np)
+    t_t = torch.from_numpy(t_map).unsqueeze(0)   # (1, H, W)
+    b_t = torch.from_numpy(b_map).unsqueeze(0)   # (1, H, W)
+    return torch.cat([rgb_tensor, t_t, b_t], dim=0)  # (5, H, W)
+
+
+def _collate_train(batch, use_physics: bool):
+    """
+    Custom collate that:
+      - Drops the filename strings returned by the dataset.
+      - Optionally extends inp to 5 channels with physics maps.
+
+    Dataset items are (inp_tensor, gt_tensor, fname_in, fname_gt).
+    """
+    inps = []
+    gts  = []
+    for inp, gt, *_ in batch:
+        if use_physics:
+            inp = _to_5ch(inp)
+        inps.append(inp)
+        gts.append(gt)
+    return torch.stack(inps), torch.stack(gts)
+
+
+def _collate_val(batch, use_physics: bool):
+    """Same as _collate_train but for validation paired datasets."""
+    return _collate_train(batch, use_physics)
 
 
 # ============================================================
@@ -65,6 +107,7 @@ class EarlyStopping:
 # ============================================================
 
 def save_ckpt(model, optimizer, epoch, metrics, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({
         "epoch":     epoch,
         "model":     model.state_dict(),
@@ -120,10 +163,179 @@ def val_loss_epoch(model, loader, criterion, device):
 
 
 # ============================================================
-# Main epoch loop  
+# Scheduler factory
 # ============================================================
 
-def main(device):
+def build_scheduler(optimizer, args):
+    """Build LR scheduler from parsed args, with optional warm-up."""
+    if args.cos_restart_cyclic:
+        base_sched = CosineAnnealingRestartCyclicLR(
+            optimizer,
+            periods        = [args.nEpochs // 2, args.nEpochs // 2],
+            restart_weights= [1.0, 0.5],
+            eta_mins       = [1e-6, 1e-7],
+        )
+    elif args.cos_restart:
+        base_sched = CosineAnnealingRestartLR(
+            optimizer,
+            periods        = [args.nEpochs],
+            restart_weights= [1.0],
+            eta_min        = 1e-6,
+        )
+    else:
+        base_sched = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=args.nEpochs // 4, gamma=0.5
+        )
+
+    if args.start_warmup and args.warmup_epochs > 0:
+        return GradualWarmupScheduler(
+            optimizer,
+            multiplier     = 1.0,
+            total_epoch    = args.warmup_epochs,
+            after_scheduler= base_sched,
+        )
+    return base_sched
+
+
+# ============================================================
+# Main epoch loop
+# ============================================================
+
+def main():
+    # ------------------------------------------------------------------
+    # Parse arguments
+    # ------------------------------------------------------------------
+    parser = option()
+    args   = parser.parse_args()
+
+    # ------------------------------------------------------------------
+    # Device
+    # ------------------------------------------------------------------
+    device = torch.device(
+        "cuda" if (args.gpu_mode and torch.cuda.is_available()) else "cpu"
+    )
+    print(f"Device: {device}")
+
+    # ------------------------------------------------------------------
+    # Reproducibility
+    # ------------------------------------------------------------------
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(args.seed)
+
+    if args.grad_detect:
+        torch.autograd.set_detect_anomaly(True)
+
+    # ------------------------------------------------------------------
+    # Determine input channels
+    # ------------------------------------------------------------------
+    use_physics  = args.model in ("unet_5ch", "unetpp_5ch", "swinunet_5ch")
+    in_channels  = 5 if use_physics else 3
+
+    # ------------------------------------------------------------------
+    # Model
+    # ------------------------------------------------------------------
+    model = UNet5ch(in_channels=in_channels).to(device)
+    print(f"Model     : {args.model}  (in_channels={in_channels})")
+
+    # ------------------------------------------------------------------
+    # Datasets & DataLoaders
+    # ------------------------------------------------------------------
+    collate_fn_train = lambda b: _collate_train(b, use_physics)
+    collate_fn_val   = lambda b: _collate_val(b, use_physics)
+
+    # Training dataset
+    if args.dataset == "euvp":
+        train_ds = get_euvp_training_set(
+            args.data_train_euvp, crop_size=args.cropSize, subset=args.euvp_subset
+        )
+    elif args.dataset == "uieb":
+        train_ds = get_uieb_training_set(args.data_train_uieb, crop_size=args.cropSize)
+    elif args.dataset == "ufo120":
+        from data.data import get_ufo120_training_set
+        train_ds = get_ufo120_training_set(args.data_train_euvp, crop_size=args.cropSize)
+    elif args.dataset == "euvp+uieb":
+        euvp_ds = get_euvp_training_set(
+            args.data_train_euvp, crop_size=args.cropSize, subset=args.euvp_subset
+        )
+        uieb_ds = get_uieb_training_set(args.data_train_uieb, crop_size=args.cropSize)
+        train_ds = data.ConcatDataset([euvp_ds, uieb_ds])
+    else:
+        raise ValueError(f"Unknown --dataset: {args.dataset}")
+
+    train_loader = data.DataLoader(
+        train_ds,
+        batch_size  = args.batchSize,
+        shuffle     = args.shuffle,
+        num_workers = args.threads,
+        pin_memory  = device.type == "cuda",
+        drop_last   = True,
+        collate_fn  = collate_fn_train,
+    )
+
+    # Validation dataset (EUVP test-set used by default)
+    val_ds = get_euvp_eval_set(args.data_val_euvp)
+    # evaluate_loader expects (inp, gt) pairs; use a simple paired wrapper instead
+    val_paired_ds = get_euvp_training_set(
+        args.data_train_euvp, crop_size=args.cropSize, subset=args.euvp_subset
+    )
+    val_loader = data.DataLoader(
+        val_paired_ds,
+        batch_size  = args.batchSize,
+        shuffle     = False,
+        num_workers = args.threads,
+        pin_memory  = device.type == "cuda",
+        drop_last   = False,
+        collate_fn  = collate_fn_val,
+    )
+
+    print(f"Train set : {len(train_ds)} samples  "
+          f"({len(train_loader)} batches of {args.batchSize})")
+    print(f"Val set   : {len(val_paired_ds)} samples")
+
+    # ------------------------------------------------------------------
+    # Loss
+    # ------------------------------------------------------------------
+    criterion = CompositeLoss(
+        lambda_l1   = args.L1_weight,
+        lambda_perc = args.perceptual_weight,
+        lambda_ssim = args.SSIM_weight,
+        device      = device,
+    )
+
+    # ------------------------------------------------------------------
+    # Optimizer & Scheduler
+    # ------------------------------------------------------------------
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = build_scheduler(optimizer, args)
+
+    print(f"Optimizer : Adam  (lr={args.lr})")
+    print(f"Scheduler : {'CosineRestartCyclic' if args.cos_restart_cyclic else 'CosineRestart' if args.cos_restart else 'StepLR'}"
+          f"  (warmup={args.warmup_epochs if args.start_warmup else 0} epochs)")
+
+    # ------------------------------------------------------------------
+    # Checkpoint directory  –  timestamped per run
+    # Layout: <checkpoint_dir>/<model>_<dataset>_<YYYYMMDD_HHMMSS>/
+    # ------------------------------------------------------------------
+    start_epoch = 1
+    RUN_TS    = datetime.now().strftime("%Y%m%d_%H%M%S")
+    RUN_ID    = f"{args.model}_{args.dataset}_{RUN_TS}"
+    CKPT_DIR  = os.path.join(args.checkpoint_dir, RUN_ID)
+    BEST_PATH = os.path.join(CKPT_DIR, "best_model.pth")
+    LAST_PATH = os.path.join(CKPT_DIR, "last_model.pth")
+    os.makedirs(CKPT_DIR, exist_ok=True)
+    print(f"Run ID    : {RUN_ID}")
+    print(f"Ckpt dir  : {CKPT_DIR}")
+
+    if args.start_epoch > 0 and os.path.isfile(LAST_PATH):
+        start_epoch, _ = load_ckpt(LAST_PATH, model, optimizer, device=str(device))
+        start_epoch += 1
+        print(f"Resumed from {LAST_PATH} → starting at epoch {start_epoch}")
+
+    # ------------------------------------------------------------------
+    # Training state
+    # ------------------------------------------------------------------
     history = {
         "train_loss": [], "val_loss": [],
         "val_psnr":   [], "val_ssim": [],
@@ -132,20 +344,19 @@ def main(device):
 
     best_psnr  = 0.0
     best_epoch = 0
-    es         = EarlyStopping(patience=cfg.PATIENCE, min_delta=cfg.MIN_DELTA, mode="max")
+    es         = EarlyStopping(patience=args.early_stop_patience, min_delta=1e-4, mode="max")
 
-    BEST_PATH = f"{cfg.OUTPUT_DIR}/checkpoints/best_model.pth"
-    LAST_PATH = f"{cfg.OUTPUT_DIR}/checkpoints/last_model.pth"
+    LOG_EVERY  = max(1, args.nEpochs // 20)   # log ~20 times during training
 
     print(f"\n{'='*65}")
-    print(f"  Training: {cfg.MODEL_NAME}   epochs={cfg.NUM_EPOCHS}   batch={cfg.BATCH_SIZE}")
+    print(f"  Training: {args.model}   epochs={args.nEpochs}   batch={args.batchSize}")
     print(f"{'='*65}")
     print(f"{'Epoch':>6}  {'TrainL':>8}  {'ValL':>8}  {'PSNR':>7}  {'SSIM':>7}  {'LR':>9}  {'Time':>6}")
     print("-"*65)
 
     train_start = time.time()
 
-    for epoch in range(1, cfg.NUM_EPOCHS + 1):
+    for epoch in range(start_epoch, args.nEpochs + 1):
         t0 = time.time()
 
         # Train
@@ -155,7 +366,7 @@ def main(device):
         vl_loss = val_loss_epoch(model, val_loader, criterion, device)
 
         # Val metrics (every LOG_EVERY epochs or epoch 1)
-        if epoch == 1 or epoch % cfg.LOG_EVERY == 0:
+        if epoch == 1 or epoch % LOG_EVERY == 0:
             val_metrics, _ = evaluate_loader(model, val_loader, device, max_samples=100)
             val_psnr = val_metrics["psnr"]
             val_ssim = val_metrics["ssim"]
@@ -175,7 +386,7 @@ def main(device):
         history["lr"].append(cur_lr)
 
         # Save best immediately when PSNR improves
-        if val_psnr > best_psnr + cfg.MIN_DELTA:
+        if val_psnr > best_psnr + 1e-4:
             best_psnr  = val_psnr
             best_epoch = epoch
             save_ckpt(model, optimizer, epoch,
@@ -186,20 +397,21 @@ def main(device):
             flag = ""
 
         # Periodic checkpoint
-        if epoch % cfg.SAVE_EVERY == 0:
+        if epoch % args.snapshots == 0:
             save_ckpt(model, optimizer, epoch,
                       {"psnr": val_psnr, "ssim": val_ssim},
-                      f"{cfg.OUTPUT_DIR}/checkpoints/epoch_{epoch:04d}.pth")
+                      os.path.join(CKPT_DIR, f"epoch_{epoch:04d}.pth"))
 
         # Log line
-        if epoch == 1 or epoch % cfg.LOG_EVERY == 0 or flag:
+        if epoch == 1 or epoch % LOG_EVERY == 0 or flag:
             print(f"{epoch:>6}  {tr_loss:>8.4f}  {vl_loss:>8.4f}  "
                   f"{val_psnr:>7.3f}  {val_ssim:>7.4f}  {cur_lr:>9.2e}  "
                   f"{elapsed:>5.1f}s{flag}")
 
         # Early stopping
         if es(val_psnr):
-            print(f"\nEarly stopping at epoch {epoch}  (no improvement for {cfg.PATIENCE} evals)")
+            print(f"\nEarly stopping at epoch {epoch}  "
+                  f"(no improvement for {args.early_stop_patience} evals)")
             break
 
     # Save last model
@@ -211,13 +423,12 @@ def main(device):
     print(f"  Total training time: {total_min:.1f} min")
     print(f"{'='*65}")
 
-    # Export history JSON
-    with open(f"{cfg.OUTPUT_DIR}/training_history.json", "w") as f:
+    # Export history JSON  –  saved alongside the checkpoints
+    hist_path = os.path.join(CKPT_DIR, "training_history.json")
+    with open(hist_path, "w") as f:
         json.dump(history, f, indent=2)
-    print("History saved →", f"{cfg.OUTPUT_DIR}/training_history.json")
+    print("History saved →", hist_path)
 
 
 if __name__ == "__main__":
-    import torch
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    main(device)
+    main()
