@@ -17,8 +17,6 @@ from data.data import (
     get_euvp_training_set,
     get_uieb_training_set,
     get_ufo120_training_set,
-    get_euvp_eval_set,
-    get_uieb_eval_set,
 )
 from data.scheduler import (
     GradualWarmupScheduler,
@@ -282,6 +280,18 @@ def main():
     else:
         raise ValueError(f"Unknown --dataset: {args.dataset}")
 
+    # Validation: 10 % hold-out from the training set (paired → gives GT for
+    # loss + metric computation).  Fixed seed for reproducibility.
+    # NOTE: EUVP has no separate testA/testB; validation/ is unpaired (no GT).
+    n_val   = max(1, int(len(train_ds) * 0.10))
+    n_train = len(train_ds) - n_val
+    train_ds, val_ds = data.random_split(
+        train_ds,
+        [n_train, n_val],
+        generator=torch.Generator().manual_seed(args.seed),
+    )
+    print(f"Dataset   : {args.dataset}  (train={n_train}, val={n_val})")
+
     train_loader = data.DataLoader(
         train_ds,
         batch_size  = args.batchSize,
@@ -292,14 +302,8 @@ def main():
         collate_fn  = collate_fn_train,
     )
 
-    # Validation dataset (EUVP test-set used by default)
-    val_ds = get_euvp_eval_set(args.data_val_euvp)
-    # evaluate_loader expects (inp, gt) pairs; use a simple paired wrapper instead
-    val_paired_ds = get_euvp_training_set(
-        args.data_train_euvp, crop_size=args.cropSize, subset=args.euvp_subset
-    )
     val_loader = data.DataLoader(
-        val_paired_ds,
+        val_ds,
         batch_size  = args.batchSize,
         shuffle     = False,
         num_workers = args.threads,
