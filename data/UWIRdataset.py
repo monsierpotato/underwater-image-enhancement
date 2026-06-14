@@ -93,29 +93,32 @@ class EUVPDataset(data.Dataset):
     """
     Large-scale paired EUVP dataset.  Used as the primary training corpus.
 
+    Actual folder layout (Paired branch only has trainA / trainB):
+        <data_dir>/Paired/<subset>/trainA/   ← degraded inputs
+        <data_dir>/Paired/<subset>/trainB/   ← clean references
+        <data_dir>/Paired/<subset>/validation/  ← unpaired (no GT)
+
+    There is no testA / testB.  For a held-out validation set with ground
+    truth, use torch.utils.data.random_split on the training data.
+
     Args:
-        data_dir (str): Root directory of the EUVP release
-                        (the folder that contains 'Paired/').
-        subset   (str): One of 'underwater_imagenet' | 'underwater_dark' |
-                        'underwater_scenes'.  Defaults to 'underwater_imagenet'.
-        split    (str): 'train' (trainA / trainB) or 'test' (testA / testB).
+        data_dir  (str): Root directory of the EUVP release
+                         (the folder that contains 'Paired/').
+        subset    (str): One of 'underwater_imagenet' | 'underwater_dark' |
+                         'underwater_scenes'.  Defaults to 'underwater_imagenet'.
         transform: Applied identically to both input and GT.
     """
 
     SUBSETS = ('underwater_imagenet', 'underwater_dark', 'underwater_scenes')
 
-    def __init__(self, data_dir, subset='underwater_imagenet',
-                 split='train', transform=None):
+    def __init__(self, data_dir, subset='underwater_imagenet', transform=None):
         super(EUVPDataset, self).__init__()
 
         assert subset in self.SUBSETS, \
             f"subset must be one of {self.SUBSETS}, got '{subset}'"
-        assert split in ('train', 'test'), \
-            f"split must be 'train' or 'test', got '{split}'"
 
-        prefix = 'train' if split == 'train' else 'test'
-        input_dir = join(data_dir, 'Paired', subset, f'{prefix}A')
-        gt_dir    = join(data_dir, 'Paired', subset, f'{prefix}B')
+        input_dir = join(data_dir, 'Paired', subset, 'trainA')
+        gt_dir    = join(data_dir, 'Paired', subset, 'trainB')
 
         self.transform = transform
         self.input_files = sorted(
@@ -126,7 +129,7 @@ class EUVPDataset(data.Dataset):
         )
 
         assert len(self.input_files) == len(self.gt_files), (
-            f"EUVP/{subset}/{split}: mismatched file counts "
+            f"EUVP/{subset}: mismatched file counts "
             f"({len(self.input_files)} inputs vs {len(self.gt_files)} GTs)"
         )
 
