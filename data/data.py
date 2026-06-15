@@ -52,7 +52,7 @@ def get_euvp_training_set(data_dir: str, crop_size: int = 256,
         subset    : 'underwater_imagenet' | 'underwater_dark' |
                     'underwater_scenes'.
     """
-    return EUVPDataset(data_dir, subset=subset, split='train',
+    return EUVPDataset(data_dir, subset=subset,
                        transform=_train_transform(crop_size))
 
 
