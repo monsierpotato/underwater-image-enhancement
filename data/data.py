@@ -5,8 +5,7 @@ that train.py only needs a single import.
 """
 
 from torchvision.transforms import (
-    Compose, ToTensor,
-    RandomCrop, RandomHorizontalFlip, RandomVerticalFlip,
+    Compose, ToTensor, Resize,
 )
 
 from data.UWIRdataset import (
@@ -22,12 +21,14 @@ from data.eval_sets import PaddedEvalDataset, SimpleEvalDataset
 # Transform helpers
 # ---------------------------------------------------------------------------
 
-def _train_transform(crop_size: int = 256):
-    """Random crop + flips + to-tensor for paired training."""
+def _train_transform(img_size: int = 256):
+    """Resize to img_size×img_size + to-tensor for paired training.
+
+    Augmentation (hflip / vflip / rotation) is applied *separately* by the
+    dataset classes so that both images in a pair receive the same transform.
+    """
     return Compose([
-        RandomCrop((crop_size, crop_size)),
-        RandomHorizontalFlip(),
-        RandomVerticalFlip(),
+        Resize((img_size, img_size)),
         ToTensor(),
     ])
 
@@ -41,42 +42,46 @@ def _eval_transform():
 # Training sets
 # ---------------------------------------------------------------------------
 
-def get_euvp_training_set(data_dir: str, crop_size: int = 256,
-                           subset: str = 'underwater_imagenet') -> EUVPDataset:
+def get_euvp_training_set(data_dir: str, img_size: int = 256,
+                           subset: str = 'all') -> EUVPDataset:
     """
-    Primary training corpus (~12 k paired images).
+    Primary training corpus.
 
     Args:
         data_dir  : Root of the EUVP release (contains 'Paired/').
-        crop_size : Random crop size for training patches.
-        subset    : 'underwater_imagenet' | 'underwater_dark' |
-                    'underwater_scenes'.
+        img_size  : Resize target (height = width). Default: 256.
+        subset    : 'all' (notebook default, combines all three paired subsets)
+                    or one of 'underwater_imagenet' | 'underwater_dark' |
+                    'underwater_scenes', or a comma-separated string.
     """
     return EUVPDataset(data_dir, subset=subset,
-                       transform=_train_transform(crop_size))
+                       transform=_train_transform(img_size),
+                       augment=True)
 
 
-def get_uieb_training_set(data_dir: str, crop_size: int = 256) -> UIEBDataset:
+def get_uieb_training_set(data_dir: str, img_size: int = 256) -> UIEBDataset:
     """
     UIEB training split (800 pairs by convention).
 
     Args:
         data_dir  : Root of the UIEB release (contains 'raw-890/' etc.).
-        crop_size : Random crop size for training patches.
+        img_size  : Resize target. Default: 256.
     """
-    return UIEBDataset(data_dir, transform=_train_transform(crop_size))
+    return UIEBDataset(data_dir, transform=_train_transform(img_size),
+                       augment=True)
 
 
-def get_ufo120_training_set(data_dir: str, crop_size: int = 256) -> UFO120Dataset:
+def get_ufo120_training_set(data_dir: str, img_size: int = 256) -> UFO120Dataset:
     """
     UFO-120 training split (1 500 high-res AUV pairs).
 
     Args:
         data_dir  : Root of UFO-120 (contains 'train_val/' and 'test/').
-        crop_size : Random crop size for training patches.
+        img_size  : Resize target. Default: 256.
     """
     return UFO120Dataset(data_dir, split='train',
-                         transform=_train_transform(crop_size))
+                         transform=_train_transform(img_size),
+                         augment=True)
 
 
 # ---------------------------------------------------------------------------

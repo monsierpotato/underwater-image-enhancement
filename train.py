@@ -201,7 +201,7 @@ def build_scheduler(optimizer, args):
         )
     else:
         base_sched = torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=args.nEpochs // 4, gamma=0.5
+            optimizer, step_size=args.scheduler_step, gamma=args.scheduler_gamma
         )
 
     if args.start_warmup and args.warmup_epochs > 0:
@@ -240,6 +240,8 @@ def main():
     np.random.seed(args.seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     if args.grad_detect:
         torch.autograd.set_detect_anomaly(True)
@@ -264,18 +266,18 @@ def main():
     # Training dataset
     if args.dataset == "euvp":
         train_ds = get_euvp_training_set(
-            args.data_train_euvp, crop_size=args.cropSize, subset=args.euvp_subset
+            args.data_train_euvp, img_size=args.cropSize, subset=args.euvp_subset
         )
     elif args.dataset == "uieb":
-        train_ds = get_uieb_training_set(args.data_train_uieb, crop_size=args.cropSize)
+        train_ds = get_uieb_training_set(args.data_train_uieb, img_size=args.cropSize)
     elif args.dataset == "ufo120":
         from data.data import get_ufo120_training_set
-        train_ds = get_ufo120_training_set(args.data_train_euvp, crop_size=args.cropSize)
+        train_ds = get_ufo120_training_set(args.data_train_euvp, img_size=args.cropSize)
     elif args.dataset == "euvp+uieb":
         euvp_ds = get_euvp_training_set(
-            args.data_train_euvp, crop_size=args.cropSize, subset=args.euvp_subset
+            args.data_train_euvp, img_size=args.cropSize, subset=args.euvp_subset
         )
-        uieb_ds = get_uieb_training_set(args.data_train_uieb, crop_size=args.cropSize)
+        uieb_ds = get_uieb_training_set(args.data_train_uieb, img_size=args.cropSize)
         train_ds = data.ConcatDataset([euvp_ds, uieb_ds])
     else:
         raise ValueError(f"Unknown --dataset: {args.dataset}")
@@ -329,7 +331,7 @@ def main():
     # ------------------------------------------------------------------
     # Optimizer & Scheduler
     # ------------------------------------------------------------------
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = build_scheduler(optimizer, args)
 
     print(f"Optimizer : Adam  (lr={args.lr})")

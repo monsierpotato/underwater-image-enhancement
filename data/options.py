@@ -24,7 +24,7 @@ def option():
     parser.add_argument('--batchSize',    type=int,   default=16,
                         help='Training mini-batch size (proposal §4.5)')
     parser.add_argument('--cropSize',     type=int,   default=256,
-                        help='Random-crop patch size for training images')
+                        help='Resize target size for training images (height=width)')
     parser.add_argument('--nEpochs',      type=int,   default=200,
                         help='Total number of training epochs')
     parser.add_argument('--start_epoch',  type=int,   default=0,
@@ -33,6 +33,8 @@ def option():
                         help='Save a checkpoint every N epochs')
     parser.add_argument('--lr',           type=float, default=1e-4,
                         help='Initial learning rate (Adam)')
+    parser.add_argument('--weight_decay', type=float, default=1e-5,
+                        help='Adam weight decay (notebook default: 1e-5)')
     parser.add_argument('--gpu_mode',     type=_str2bool, default=True)
     parser.add_argument('--shuffle',      type=_str2bool, default=True)
     parser.add_argument('--threads',      type=int,   default=8,
@@ -41,13 +43,17 @@ def option():
     # ------------------------------------------------------------------
     # Learning-rate scheduler
     # ------------------------------------------------------------------
-    parser.add_argument('--cos_restart',       type=_str2bool, default=True,
+    parser.add_argument('--cos_restart',       type=_str2bool, default=False,
                         help='Use CosineAnnealingWarmRestarts scheduler')
     parser.add_argument('--cos_restart_cyclic', type=_str2bool, default=False,
                         help='Use cyclic cosine restart variant')
-    parser.add_argument('--warmup_epochs',     type=int,   default=3,
+    parser.add_argument('--scheduler_step',    type=int,   default=30,
+                        help='StepLR step size in epochs (notebook default: 30)')
+    parser.add_argument('--scheduler_gamma',   type=float, default=0.5,
+                        help='StepLR decay factor (notebook default: 0.5)')
+    parser.add_argument('--warmup_epochs',     type=int,   default=0,
                         help='Number of linear warm-up epochs')
-    parser.add_argument('--start_warmup',      type=_str2bool, default=True,
+    parser.add_argument('--start_warmup',      type=_str2bool, default=False,
                         help='Enable warm-up at the start of training')
 
     # ------------------------------------------------------------------
@@ -97,9 +103,9 @@ def option():
     # ------------------------------------------------------------------
     parser.add_argument('--L1_weight',         type=float, default=1.0,
                         help='λ1 — pixel-wise MAE loss weight')
-    parser.add_argument('--perceptual_weight',  type=float, default=0.04,
+    parser.add_argument('--perceptual_weight',  type=float, default=1.0,
                         help='λ2 — VGG-16 perceptual loss weight')
-    parser.add_argument('--SSIM_weight',        type=float, default=0.5,
+    parser.add_argument('--SSIM_weight',        type=float, default=0.0,
                         help='λ3 — SSIM loss weight')
 
     # ------------------------------------------------------------------
@@ -109,10 +115,13 @@ def option():
                         type=str, default='./datasets/EUVP',
                         help='Root of EUVP release (primary training corpus)')
     parser.add_argument('--euvp_subset',
-                        type=str, default='underwater_imagenet',
-                        choices=['underwater_imagenet', 'underwater_dark',
-                                 'underwater_scenes'],
-                        help='EUVP sub-set to use for training')
+                        type=str, default='all',
+                        help=(
+                            'EUVP sub-set(s) to use for training.\n'
+                            '  "all"              — all three subsets (notebook default)\n'
+                            '  "underwater_imagenet" | "underwater_dark" | "underwater_scenes"\n'
+                            '  Comma-separated for multiple: "underwater_dark,underwater_scenes"'
+                        ))
     parser.add_argument('--data_train_uieb',
                         type=str, default='./datasets/UIEB',
                         help='Root of UIEB release (supplementary training)')
