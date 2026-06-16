@@ -34,9 +34,9 @@ def option():
                              '(overrides --start_epoch logic). Example: '
                              '--resume ./checkpoints/run/epoch_0040.pth')
     parser.add_argument('--run_name',      type=str,   default='',
-                        help='Fixed run name used as the checkpoint subdirectory '
-                             '(no timestamp appended). Omit to auto-generate '
-                             '<model>_<dataset>_<YYYYMMDD_HHMMSS>. '
+                        help='Human-readable prefix for the checkpoint subdirectory. '
+                             'A timestamp is always appended: <run_name>_<YYYYMMDD_HHMMSS>. '
+                             'Omit to use <model>_<dataset>_<YYYYMMDD_HHMMSS>. '
                              'Example: --run_name unet5ch_euvp_run1')
     parser.add_argument('--snapshots',    type=int,   default=10,
                         help='Save a checkpoint every N epochs')
