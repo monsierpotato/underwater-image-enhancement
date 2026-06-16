@@ -198,11 +198,24 @@ def _load_hf_backbone(model_size: str, pretrained: bool) -> nn.Module:
         ) from exc
 
     hf_id = _SIZE_TO_HF_ID[model_size]
-    if pretrained:
-        hf_model = AutoModel.from_pretrained(hf_id, trust_remote_code=True, low_cpu_mem_usage=False)
-    else:
-        cfg      = AutoConfig.from_pretrained(hf_id, trust_remote_code=True)
-        hf_model = AutoModel.from_config(cfg, trust_remote_code=True)
+    
+    # Workaround for HuggingFace meta-device initialization crashing on torch.linspace
+    import torch
+    orig_linspace = torch.linspace
+    def patched_linspace(*args, **kwargs):
+        if kwargs.get("device") is None:
+            kwargs["device"] = "cpu"
+        return orig_linspace(*args, **kwargs)
+    
+    torch.linspace = patched_linspace
+    try:
+        if pretrained:
+            hf_model = AutoModel.from_pretrained(hf_id, trust_remote_code=True, low_cpu_mem_usage=False)
+        else:
+            cfg      = AutoConfig.from_pretrained(hf_id, trust_remote_code=True)
+            hf_model = AutoModel.from_config(cfg, trust_remote_code=True)
+    finally:
+        torch.linspace = orig_linspace
 
     return hf_model
 
