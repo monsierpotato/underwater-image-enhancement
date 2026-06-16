@@ -370,10 +370,14 @@ def main():
     print(f"Run ID    : {RUN_ID}")
     print(f"Ckpt dir  : {CKPT_DIR}")
 
-    if args.start_epoch > 0 and os.path.isfile(LAST_PATH):
+    if args.resume and os.path.isfile(args.resume):
+        start_epoch, _ = load_ckpt(args.resume, model, optimizer, device=str(device))
+        start_epoch += 1
+        print(f"Resumed   : {args.resume}  → continuing from epoch {start_epoch}")
+    elif args.start_epoch > 0 and os.path.isfile(LAST_PATH):
         start_epoch, _ = load_ckpt(LAST_PATH, model, optimizer, device=str(device))
         start_epoch += 1
-        print(f"Resumed from {LAST_PATH} → starting at epoch {start_epoch}")
+        print(f"Resumed   : {LAST_PATH}  → continuing from epoch {start_epoch}")
 
     # ------------------------------------------------------------------
     # Training state

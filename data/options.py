@@ -29,6 +29,10 @@ def option():
                         help='Total number of training epochs')
     parser.add_argument('--start_epoch',  type=int,   default=0,
                         help='Starting epoch (> 0 resumes from checkpoint)')
+    parser.add_argument('--resume',        type=str,   default='',
+                        help='Path to a checkpoint .pth to resume training from '
+                             '(overrides --start_epoch logic). Example: '
+                             '--resume ./checkpoints/run/epoch_0040.pth')
     parser.add_argument('--snapshots',    type=int,   default=10,
                         help='Save a checkpoint every N epochs')
     parser.add_argument('--lr',           type=float, default=1e-4,
@@ -39,8 +43,8 @@ def option():
     parser.add_argument('--num_gpus',     type=int,       default=1,
                         help='Number of GPUs to use via DataParallel (1 = single GPU)')
     parser.add_argument('--shuffle',      type=_str2bool, default=True)
-    parser.add_argument('--threads',      type=int,   default=8,
-                        help='DataLoader worker threads')
+    parser.add_argument('--threads',      type=int,   default=4,
+                        help='DataLoader worker threads (keep low to avoid OOM on Kaggle; 2-4 recommended)')
 
     # ------------------------------------------------------------------
     # Learning-rate scheduler
