@@ -18,7 +18,7 @@ Naming convention
 -----------------
     <backbone>_<variant>
 
-   backbone : unet | resnet | mobilenet | mambavision
+   backbone : unet | resnet | mobilenet | mambavision | mambaunet
   variant  : 3ch | 4ch_t | 4ch_b | 5ch
 
 Physics modes
@@ -35,13 +35,14 @@ from net.unet import UNet5ch
 from net.resnet_unet import ResNetUNet
 from net.mobilenet_unet import MobileNetUNet
 from net.mambavision_unet import MambaVisionUNet
+from net.mamba_unet import MambaUNet
 
 
 # ---------------------------------------------------------------------------
 # Supported names
 # ---------------------------------------------------------------------------
 
-_BACKBONES = ("unet", "resnet", "mobilenet", "mambavision")
+_BACKBONES = ("unet", "resnet", "mobilenet", "mambavision", "mambaunet")
 
 _VARIANTS = {
     "3ch":   (3, "none"),
@@ -130,6 +131,9 @@ def build_model(name: str, pretrained_backbone: bool = True) -> nn.Module:
 
     if backbone == "mambavision":
         return MambaVisionUNet(in_channels=in_channels, pretrained=pretrained_backbone)
+
+    if backbone == "mambaunet":
+        return MambaUNet(in_channels=in_channels)
 
     # Should never reach here due to parse_model_variant guard
     raise ValueError(f"Unknown backbone: {backbone}")

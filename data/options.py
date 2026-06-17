@@ -99,17 +99,20 @@ def option():
                             'mobilenet_3ch', 'mobilenet_4ch_t', 'mobilenet_4ch_b', 'mobilenet_5ch',
                             # MambaVision-T encoder (Mamba + Transformer hybrid, NVIDIA 2024)
                             'mambavision_3ch', 'mambavision_4ch_t', 'mambavision_4ch_b', 'mambavision_5ch',
+                            # Native Mamba U-Net (VSS blocks at every encoder+decoder stage)
+                            'mambaunet_3ch', 'mambaunet_4ch_t', 'mambaunet_4ch_b', 'mambaunet_5ch',
                         ],
                         help=(
                             'Model variant (backbone_channels):\n'
                             '  Channels: 3ch=RGB only | 4ch_t=RGB+t(x) | 4ch_b=RGB+B | 5ch=RGB+t(x)+B\n'
                             '  Backbones: unet | resnet (ResNet-50) | mobilenet (MobileNetV3-Large) | '
-                            'mambavision (MambaVision-T, hybrid Mamba+Transformer, NVIDIA 2024)'
+                            'mambavision (MambaVision-T, hybrid Mamba+Transformer, NVIDIA 2024) | '
+                            'mambaunet (native Mamba U-Net, VSS blocks throughout, ~29M params)'
                         ))
     parser.add_argument('--pretrained_backbone', type=_str2bool, default=True,
                         help='Load ImageNet-pretrained weights for ResNet / MobileNet encoders')
     parser.add_argument('--backbone', type=str, default='unet',
-                        choices=['unet', 'resnet', 'mobilenet', 'mambavision'],
+                        choices=['unet', 'resnet', 'mobilenet', 'mambavision', 'mambaunet'],
                         help='Refinement backbone architecture (inferred from --model if unset)')
 
     # ------------------------------------------------------------------
