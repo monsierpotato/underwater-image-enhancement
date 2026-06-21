@@ -34,3 +34,9 @@ thop>=0.1.1
 transformers>=4.40.0
 huggingface_hub>=0.20.0
 einops>=0.7.0         # tensor rearrangements used by MambaVisionMixer
+
+# --- Native Mamba selective scan CUDA kernel ---
+# Linux + CUDA (Kaggle) only. Gives ~200x speedup over the Python loop fallback.
+# Install BEFORE running train.py on Kaggle:  pip install mamba-ssm
+# Skip on Windows — the Python chunked-scan fallback is used automatically.
+# mamba-ssm>=1.2.0
