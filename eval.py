@@ -55,7 +55,7 @@ class TestDataset(data.Dataset):
 
         return inp_t, gt_t, "", ""
 from measure_underwater import evaluate_loader
-from train import load_ckpt, _collate_val
+from train import load_ckpt, _collate_val, _resolve_physics_extractor
 
 
 def main():
@@ -68,6 +68,8 @@ def main():
     # Reproducibility for dataset split
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    physics_extractor = _resolve_physics_extractor(args.prior_method)
+    print(f"Prior method: {args.prior_method}")
 
     # ------------------------------------------------------------------
     # Datasets
@@ -118,7 +120,7 @@ def main():
         ckpt_epoch, ckpt_metrics = load_ckpt(best_path, model, device=str(device))
         print(f"Loaded best checkpoint: epoch={ckpt_epoch}  stored metrics={ckpt_metrics}")
 
-        collate_fn_val = lambda b: _collate_val(b, physics_mode)
+        collate_fn_val = lambda b: _collate_val(b, physics_mode, physics_extractor)
 
         val_loader = data.DataLoader(
             val_ds,
