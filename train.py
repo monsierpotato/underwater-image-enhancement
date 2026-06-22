@@ -4,6 +4,7 @@
 
 import json
 import os
+import sys
 import time
 from datetime import datetime
 
@@ -27,6 +28,28 @@ from net import compute_physics_maps, compute_physics_maps_gdcp, compute_physics
 from net.registry import build_model, parse_model_variant
 from loss import CompositeLoss
 from measure_underwater import evaluate_loader
+
+
+# ============================================================
+# Tee: mirror stdout to both terminal and a log file
+# ============================================================
+
+class _Tee:
+    """Write to *stream* and *file_obj* simultaneously."""
+    def __init__(self, stream, file_obj):
+        self._stream = stream
+        self._file   = file_obj
+
+    def write(self, data: str):
+        self._stream.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stream.flush()
+        self._file.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
 
 
 # ============================================================
@@ -399,8 +422,19 @@ def main():
     BEST_PATH = os.path.join(CKPT_DIR, "best_model.pth")
     LAST_PATH = os.path.join(CKPT_DIR, "last_model.pth")
     os.makedirs(CKPT_DIR, exist_ok=True)
+
+    # ---- log file (tee stdout → terminal + file) ---------------------------
+    LOG_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_PATH = os.path.join(LOG_DIR, f"{RUN_ID}.log")
+    _log_file   = open(LOG_PATH, "w", encoding="utf-8")
+    _orig_stdout = sys.stdout
+    sys.stdout   = _Tee(_orig_stdout, _log_file)
+    # ------------------------------------------------------------------------
+
     print(f"Run ID    : {RUN_ID}")
     print(f"Ckpt dir  : {CKPT_DIR}")
+    print(f"Log file  : {LOG_PATH}")
 
     if args.resume and os.path.isfile(args.resume):
         start_epoch, _ = load_ckpt(args.resume, model, optimizer, device=str(device))
@@ -506,6 +540,12 @@ def main():
     with open(hist_path, "w") as f:
         json.dump(history, f, indent=2)
     print("History saved →", hist_path)
+
+    # ---- restore stdout and close log file ---------------------------------
+    sys.stdout = _orig_stdout
+    _log_file.close()
+    print(f"[INFO] Training log saved → {LOG_PATH}")
+    # ------------------------------------------------------------------------
 
 
 if __name__ == "__main__":
