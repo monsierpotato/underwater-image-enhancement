@@ -137,7 +137,7 @@ class UNet5ch(nn.Module):
         f = features
         
         # HYPERPARAMETERS CHO DENSENET:
-        n_l = 2   # Số lượng DenseLayer trong mỗi Block
+        n_l = 4   # Số lượng DenseLayer trong mỗi Block
         gr  = 8   # Growth rate (tốc độ phình kênh ra sau mỗi layer)
 
         # Encoder
