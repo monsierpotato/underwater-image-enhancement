@@ -435,6 +435,9 @@ def main():
     print(f"Run ID    : {RUN_ID}")
     print(f"Ckpt dir  : {CKPT_DIR}")
     print(f"Log file  : {LOG_PATH}")
+    print(f"Command   : {' '.join(sys.argv)}")
+    print(f"Timestamp : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("-" * 65)
 
     if args.resume and os.path.isfile(args.resume):
         start_epoch, _ = load_ckpt(args.resume, model, optimizer, device=str(device))
