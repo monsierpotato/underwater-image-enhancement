@@ -1,75 +1,87 @@
 """
 unet.py
 -------
-4-level U-Net for underwater image restoration.
+Dense U-Net architecture for underwater image restoration.
+Customized with DenseNet blocks (DenseLayer, DenseConvBlock).
 
 The same class handles both the RGB baseline and the physics-guided
-5-channel variant; the only difference is ``in_channels``:
-
-    in_channels = 3  →  RGB baseline  (unet_rgb notebook)
-    in_channels = 5  →  RGB + t(x) + B  (this notebook, unet_5ch)
-
-Architecture
-------------
-                 Input (B, C_in, H, W)
-                        │
-            enc1  64  ──┐ DoubleConv
-            enc2  128 ──┤ MaxPool → DoubleConv
-            enc3  256 ──┤ MaxPool → DoubleConv
-            enc4  512 ──┤ MaxPool → DoubleConv
-         bottleneck 1024  MaxPool → DoubleConv
-            dec4  512 ──┘ Upsample + skip
-            dec3  256 ──┘ Upsample + skip
-            dec2  128 ──┘ Upsample + skip
-            dec1   64 ──┘ Upsample + skip
-               head   Conv1×1 → Sigmoid
-                        │
-                Output (B, 3, H, W) in [0, 1]
+variant; the only difference is ``in_channels``:
+    in_channels = 3  →  RGB baseline
+    in_channels = 5  →  RGB + t(x) + B
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
-# Building blocks
+# Building blocks (DenseNet components)
 # ---------------------------------------------------------------------------
 
-class DoubleConv(nn.Module):
+class DenseLayer(nn.Module):
     """
-    Two successive (Conv3×3 → BN → ReLU) blocks.
-
-    Args:
-        in_ch   (int):   Input channels.
-        out_ch  (int):   Output channels.
-        dropout (float): Dropout2d probability after second ReLU. Default: 0.
+    Một layer cơ bản của DenseNet gồm Bottleneck (1x1 Conv) để giảm params
+    và Composite layer (3x3 Conv) để trích xuất đặc trưng.
     """
-
-    def __init__(self, in_ch: int, out_ch: int, dropout: float = 0.0):
+    def __init__(self, in_channels: int, growth_rate: int, bn_size: int = 4):
         super().__init__()
-        layers = [
-            nn.Conv2d(in_ch,  out_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
+        # Bottleneck layer (1x1 conv)
+        self.bottleneck = nn.Sequential(
+            nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
+            nn.Conv2d(in_channels, bn_size * growth_rate, kernel_size=1, bias=False)
+        )
+        # Composite layer (3x3 conv)
+        self.conv = nn.Sequential(
+            nn.BatchNorm2d(bn_size * growth_rate),
             nn.ReLU(inplace=True),
-        ]
-        if dropout > 0.0:
-            layers.append(nn.Dropout2d(dropout))
-        self.net = nn.Sequential(*layers)
+            nn.Conv2d(bn_size * growth_rate, growth_rate, kernel_size=3, padding=1, bias=False)
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        new_features = self.conv(self.bottleneck(x))
+        # Nối feature map mới với input ban đầu theo chiều channels
+        return torch.cat([x, new_features], dim=1)
+
+
+class DenseConvBlock(nn.Module):
+    """
+    Module thay thế cho DoubleConv truyền thống. 
+    Chứa nhiều DenseLayer, cuối cùng đi qua một Transition Layer 
+    để ép số lượng channels về đúng out_channels yêu cầu của U-Net.
+    """
+    def __init__(self, in_channels: int, out_channels: int, num_layers: int = 4, growth_rate: int = 32, bn_size: int = 4):
+        super().__init__()
+        layers = []
+        current_channels = in_channels
+        
+        # Xây dựng các Dense Layer
+        for i in range(num_layers):
+            layers.append(DenseLayer(current_channels, growth_rate, bn_size))
+            current_channels += growth_rate
+        
+        self.dense_block = nn.Sequential(*layers)
+        
+        # Transition layer để chuyển đổi chiều sâu feature map về out_channels
+        self.transition = nn.Sequential(
+            nn.BatchNorm2d(current_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(current_channels, out_channels, kernel_size=1, bias=False)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.dense_block(x)
+        return self.transition(x)
 
 
 class Down(nn.Module):
-    """MaxPool2d(2) followed by DoubleConv."""
-
-    def __init__(self, in_ch: int, out_ch: int):
+    """MaxPool2d(2) followed by DenseConvBlock."""
+    def __init__(self, in_ch: int, out_ch: int, num_layers: int = 4, growth_rate: int = 32):
         super().__init__()
-        self.net = nn.Sequential(nn.MaxPool2d(2), DoubleConv(in_ch, out_ch))
+        self.net = nn.Sequential(
+            nn.MaxPool2d(2),
+            DenseConvBlock(in_ch, out_ch, num_layers, growth_rate)
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
@@ -77,23 +89,16 @@ class Down(nn.Module):
 
 class Up(nn.Module):
     """
-    Decoder step: upsample ``x1``, pad to match skip ``x2``, concatenate, convolve.
-
-    Args:
-        prev_ch  (int):  Channels coming from the deeper layer.
-        skip_ch  (int):  Channels from the matching encoder skip connection.
-        out_ch   (int):  Output channels after DoubleConv.
-        bilinear (bool): Use bilinear upsampling; False uses ConvTranspose2d.
+    Decoder step: upsample ``x1``, pad to match skip ``x2``, concatenate, followed by DenseConvBlock.
     """
-
-    def __init__(self, prev_ch: int, skip_ch: int, out_ch: int, bilinear: bool = True):
+    def __init__(self, prev_ch: int, skip_ch: int, out_ch: int, bilinear: bool = True, num_layers: int = 4, growth_rate: int = 32):
         super().__init__()
         if bilinear:
             self.up   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
-            self.conv = DoubleConv(prev_ch + skip_ch, out_ch)
+            self.conv = DenseConvBlock(prev_ch + skip_ch, out_ch, num_layers, growth_rate)
         else:
             self.up   = nn.ConvTranspose2d(prev_ch, prev_ch // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv((prev_ch // 2) + skip_ch, out_ch)
+            self.conv = DenseConvBlock((prev_ch // 2) + skip_ch, out_ch, num_layers, growth_rate)
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
         x1 = self.up(x1)
@@ -105,32 +110,22 @@ class Up(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# U-Net
+# Dense U-Net Main Architecture
 # ---------------------------------------------------------------------------
 
 class UNet5ch(nn.Module):
     """
-    Standard 4-level U-Net for underwater image restoration.
-
-    Accepts either 3-channel (RGB) or 5-channel (RGB + physics) input
-    via the ``in_channels`` argument.  The output is always a 3-channel
-    RGB image in [0, 1] (Sigmoid head).
+    Dense U-Net for underwater image restoration.
+    
+    Lưu ý: Tên class vẫn được giữ là `UNet5ch` để tương thích với `registry.py`,
+    nhưng kiến trúc bên trong là DenseUNet.
 
     Args:
-        in_channels  (int):          Input channels – 3 for RGB, 5 for physics-guided.
+        in_channels  (int):          Input channels (3 or 5).
         out_channels (int):          Output channels. Default: 3.
         features     (tuple[int]):   Feature map sizes at each encoder level.
-                                     Default: (64, 128, 256, 512).
         bilinear     (bool):         Bilinear upsampling vs ConvTranspose2d.
-                                     Default: True.
-
-    Example::
-
-        model = UNet5ch(in_channels=5)
-        x = torch.randn(2, 5, 256, 256)
-        y = model(x)          # (2, 3, 256, 256)
     """
-
     def __init__(
         self,
         in_channels:  int          = 5,
@@ -140,33 +135,36 @@ class UNet5ch(nn.Module):
     ):
         super().__init__()
         f = features
+        
+        # HYPERPARAMETERS CHO DENSENET:
+        n_l = 2   # Số lượng DenseLayer trong mỗi Block
+        gr  = 8   # Growth rate (tốc độ phình kênh ra sau mỗi layer)
 
         # Encoder
-        self.enc1       = DoubleConv(in_channels, f[0])
-        self.enc2       = Down(f[0], f[1])
-        self.enc3       = Down(f[1], f[2])
-        self.enc4       = Down(f[2], f[3])
-
-        # Bottleneck  (f[3] × 2 = 1024 for default features)
-        self.bottleneck = Down(f[3], f[3] * 2)
-
-        # Decoder – channels: (from_below, skip, out)
-        self.dec4 = Up(f[3] * 2, f[3], f[3], bilinear)
-        self.dec3 = Up(f[3],     f[2], f[2], bilinear)
-        self.dec2 = Up(f[2],     f[1], f[1], bilinear)
-        self.dec1 = Up(f[1],     f[0], f[0], bilinear)
-
-        # Output head: 1×1 conv + Sigmoid → [0, 1]
+        self.enc1 = DenseConvBlock(in_channels, f[0], n_l, gr)
+        self.enc2 = Down(f[0], f[1], n_l, gr)
+        self.enc3 = Down(f[1], f[2], n_l, gr)
+        self.enc4 = Down(f[2], f[3], n_l, gr)
+        
+        # Bottleneck (f[3] * 2 = 1024)
+        self.bottleneck = Down(f[3], f[3] * 2, n_l, gr)
+        
+        # Decoder
+        self.dec4 = Up(f[3] * 2, f[3], f[3], bilinear, n_l, gr)
+        self.dec3 = Up(f[3],     f[2], f[2], bilinear, n_l, gr)
+        self.dec2 = Up(f[2],     f[1], f[1], bilinear, n_l, gr)
+        self.dec1 = Up(f[1],     f[0], f[0], bilinear, n_l, gr)
+        
+        # Output head: 1x1 conv + Sigmoid -> [0, 1]
         self.head = nn.Sequential(
             nn.Conv2d(f[0], out_channels, kernel_size=1),
-            nn.Sigmoid(),
+            nn.Sigmoid()
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x (Tensor): (N, C_in, H, W)  C_in = 3 or 5.
-
+            x (Tensor): (N, in_channels, H, W)
         Returns:
             Tensor: (N, 3, H, W) restored RGB image in [0, 1].
         """
