@@ -155,8 +155,13 @@ def train_epoch(model, loader, optimizer, criterion, device):
     tot_loss = 0.0
     comps    = {"l1": 0.0, "perceptual": 0.0, "ssim_loss": 0.0}
 
-    # BỎ TQDM, DÙNG ENUMERATE THÔNG THƯỜNG
-    for batch_idx, (inp, gt) in enumerate(loader):
+    try:
+        from tqdm.auto import tqdm
+        loader_pbar = tqdm(loader, desc="Training Batch", leave=False, mininterval=2.0)
+    except ImportError:
+        loader_pbar = loader
+
+    for inp, gt in loader_pbar:
         inp, gt = inp.to(device), gt.to(device)
         optimizer.zero_grad(set_to_none=True)
         pred         = model(inp)
@@ -169,12 +174,9 @@ def train_epoch(model, loader, optimizer, criterion, device):
         for k in comps:
             comps[k] += parts.get(k, 0.0)
 
-        # Chỉ in log ra màn hình mỗi 50 batch để tránh tràn I/O
-        if (batch_idx + 1) % 50 == 0:
-            print(f"   [Batch {batch_idx + 1}/{len(loader)}] Loss: {loss.item():.4f}")
-
     n = len(loader)
     return tot_loss / n, {k: v / n for k, v in comps.items()}
+
 
 @torch.no_grad()
 def val_loss_epoch(model, loader, criterion, device):
@@ -264,6 +266,30 @@ def main():
     # Model
     # ------------------------------------------------------------------
     model = build_model(args.model, pretrained_backbone=args.pretrained_backbone).to(device)
+
+    # --- BẮT ĐẦU ĐOẠN CODE TÍNH PARAMS & FLOPS ---
+    try:
+        from thop import profile, clever_format
+        # Tạo dummy input tương ứng với số kênh và kích thước ảnh đầu vào
+        dummy_input = torch.randn(1, in_channels, args.cropSize, args.cropSize).to(device)
+        macs, params = profile(model, inputs=(dummy_input, ), verbose=False)
+        macs_str, params_str = clever_format([macs, params], "%.3f")
+        
+        print(f"\n{'='*65}")
+        print(f"  [Model Info] {args.model}")
+        print(f"  Parameters : {params_str}")
+        print(f"  MACs/FLOPs : {macs_str}")
+        print(f"{'='*65}\n")
+    except ImportError:
+        # Fallback đếm tay bằng PyTorch nếu chưa cài thop
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"\n{'='*65}")
+        print(f"  [Model Info] {args.model}")
+        print(f"  Total Params: {total_params:,} | Trainable: {trainable_params:,}")
+        print(f"  (Tip: Chạy lệnh '!pip install thop' trong Kaggle để xem thêm MACs/FLOPs)")
+        print(f"{'='*65}\n")
+    # --- KẾT THÚC ĐOẠN CODE TÍNH PARAMS & FLOPS ---
 
     # ------------------------------------------------------------------
     # Multi-GPU  (DataParallel)
