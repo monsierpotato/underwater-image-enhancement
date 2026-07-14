@@ -128,8 +128,75 @@ def _collate_train(batch, physics_mode: str, physics_extractor=None):
     """
     inps = []
     gts = []
-    for inp, gt, *_ in batch:
-        inp = _add_physics_channels(inp, physics_mode, physics_extractor)
+
+    # Infer prior_method from the extractor name
+    if physics_extractor is not None:
+        extractor_name = getattr(physics_extractor, "__name__", "")
+        if "gdcp" in extractor_name:
+            prior_method = "gdcp"
+        elif "gupdm" in extractor_name:
+            prior_method = "gupdm"
+        else:
+            prior_method = "udcp"
+    else:
+        prior_method = "udcp"
+
+    for inp, gt, *files in batch:
+        if physics_mode != "none":
+            loaded_from_cache = False
+            img_size = inp.shape[-1]  # spatial dimension (H or W)
+            
+            if files and isinstance(files[0], str) and files[0]:
+                img_path = files[0]
+                parent_dir = os.path.dirname(os.path.dirname(img_path))
+                cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
+                stem = os.path.splitext(os.path.basename(img_path))[0]
+                cache_path = os.path.join(cache_dir, f"{stem}.npz")
+                
+                if os.path.exists(cache_path):
+                    try:
+                        cache_data = np.load(cache_path)
+                        t_map = cache_data['t']
+                        b_map = cache_data['b']
+                        
+                        t_t = torch.from_numpy(t_map).unsqueeze(0)  # (1, H, W)
+                        b_t = torch.from_numpy(b_map).unsqueeze(0)  # (1, H, W)
+                        
+                        if physics_mode == "t":
+                            inp = torch.cat([inp, t_t], dim=0)
+                        elif physics_mode == "b":
+                            inp = torch.cat([inp, b_t], dim=0)
+                        elif physics_mode == "tb":
+                            inp = torch.cat([inp, t_t, b_t], dim=0)
+                        loaded_from_cache = True
+                    except Exception:
+                        pass
+            
+            if not loaded_from_cache:
+                # Fallback to computing on the fly
+                inp = _add_physics_channels(inp, physics_mode, physics_extractor)
+                
+                # Save to cache
+                if files and isinstance(files[0], str) and files[0]:
+                    img_path = files[0]
+                    parent_dir = os.path.dirname(os.path.dirname(img_path))
+                    cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
+                    os.makedirs(cache_dir, exist_ok=True)
+                    stem = os.path.splitext(os.path.basename(img_path))[0]
+                    cache_path = os.path.join(cache_dir, f"{stem}.npz")
+                    
+                    try:
+                        curr_extractor = physics_extractor
+                        if curr_extractor is None:
+                            from uwir.physics import compute_physics_maps
+                            curr_extractor = compute_physics_maps
+                        
+                        img_np = inp[:3].permute(1, 2, 0).numpy().astype(np.float32)
+                        t_map, b_map = curr_extractor(img_np)
+                        np.savez(cache_path, t=t_map.astype(np.float32), b=b_map.astype(np.float32))
+                    except Exception:
+                        pass
+
         inps.append(inp)
         gts.append(gt)
     return torch.stack(inps), torch.stack(gts)

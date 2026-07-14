@@ -45,13 +45,16 @@ class UIEBDataset(data.Dataset):
     INPUT_DIR = "raw-890"
     GT_DIR = "reference-890"
 
-    def __init__(self, data_dir, transform=None, augment=False, in_memory=False):
+    def __init__(self, data_dir, transform=None, augment=False, in_memory=False, physics_mode="none", prior_method="gupdm", img_size=256):
         super().__init__()
         self.input_dir = join(data_dir, self.INPUT_DIR)
         self.gt_dir = join(data_dir, self.GT_DIR)
         self.transform = transform
         self.augment = augment
         self.in_memory = in_memory
+        self.physics_mode = physics_mode
+        self.prior_method = prior_method
+        self.img_size = img_size
 
         # Stem-name matching (robust against ordering differences)
         gt_dict = {
@@ -93,10 +96,43 @@ class UIEBDataset(data.Dataset):
             img_in = self.transform(img_in)
             img_gt = self.transform(img_gt)
 
+        if self.physics_mode != "none":
+            import torch
+            parent_dir = os.path.dirname(os.path.dirname(self.input_files[index]))
+            cache_dir = os.path.join(parent_dir, f"physics_cache_{self.prior_method}_{self.img_size}")
+            stem = os.path.splitext(file_in)[0]
+            cache_path = os.path.join(cache_dir, f"{stem}.npz")
+            
+            if os.path.exists(cache_path):
+                import numpy as np
+                data = np.load(cache_path)
+                t = torch.from_numpy(data['t']).unsqueeze(0)
+                b = torch.from_numpy(data['b']).unsqueeze(0)
+            else:
+                from uwir.physics import compute_physics_maps, compute_physics_maps_gdcp, compute_physics_maps_gupdm
+                img_np = img_in.permute(1, 2, 0).numpy().astype("float32")
+                if self.prior_method == "gupdm":
+                    t_map, b_map = compute_physics_maps_gupdm(img_np)
+                elif self.prior_method == "udcp":
+                    t_map, b_map = compute_physics_maps(img_np)
+                elif self.prior_method == "gdcp":
+                    t_map, b_map = compute_physics_maps_gdcp(img_np)
+                else:
+                    raise ValueError(f"Unknown prior: {self.prior_method}")
+                t = torch.from_numpy(t_map).unsqueeze(0)
+                b = torch.from_numpy(b_map).unsqueeze(0)
+
+            if self.physics_mode == "t":
+                img_in = torch.cat([img_in, t], dim=0)
+            elif self.physics_mode == "b":
+                img_in = torch.cat([img_in, b], dim=0)
+            elif self.physics_mode == "tb":
+                img_in = torch.cat([img_in, t, b], dim=0)
+
         if self.augment:
             img_in, img_gt = _paired_augment(img_in, img_gt)
 
-        return img_in, img_gt, file_in, file_gt
+        return img_in, img_gt, self.input_files[index], file_gt
 
     def __len__(self):
         return len(self.input_files)
@@ -232,7 +268,7 @@ class EUVPDataset(data.Dataset):
         if self.augment:
             img_in, img_gt = _paired_augment(img_in, img_gt)
 
-        return img_in, img_gt, file_in, file_gt
+        return img_in, img_gt, self.input_files[index], file_gt
 
     def __len__(self):
         return len(self.input_files)
@@ -313,7 +349,7 @@ class UFO120Dataset(data.Dataset):
         if self.augment:
             img_in, img_gt = _paired_augment(img_in, img_gt)
 
-        return img_in, img_gt, file_in, file_gt
+        return img_in, img_gt, self.input_files[index], file_gt
 
     def __len__(self):
         return len(self.input_files)
@@ -352,7 +388,7 @@ class U45Dataset(data.Dataset):
         if self.transform:
             img_in = self.transform(img_in)
 
-        return img_in, file_in
+        return img_in, self.input_files[index]
 
     def __len__(self):
         return len(self.input_files)
