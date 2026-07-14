@@ -150,6 +150,7 @@ In a Kaggle notebook, enable a GPU accelerator and run:
 # Replace this with the actual EUVP directory shown under /kaggle/input.
 !DATA_ROOT=/kaggle/input/euvp-dataset/EUVP \
   OUTPUT_ROOT=/kaggle/working/fast_screen \
+  NUM_GPUS=2 \
   bash scripts/experiments/run_fast_context_screen.sh
 ```
 
@@ -162,9 +163,12 @@ Settings can be overridden without editing the script:
 
 ```bash
 DATA_ROOT=/kaggle/input/.../EUVP \
-BATCH_SIZE=4 EPOCHS=20 SEED=123 PRIOR_METHOD=gupdm \
+BATCH_SIZE=8 NUM_GPUS=2 EPOCHS=20 SEED=123 PRIOR_METHOD=gupdm \
 bash scripts/experiments/run_fast_context_screen.sh
 ```
+
+`NUM_GPUS` defaults to 2. Training uses both when Kaggle exposes two GPUs and
+automatically caps the value to the number of GPUs actually available.
 
 Promote a candidate when it gains roughly 0.20 dB validation PSNR without a
 material SSIM loss. Confirm it with multiple seeds before a full-data run.

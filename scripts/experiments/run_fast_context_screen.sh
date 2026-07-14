@@ -15,6 +15,7 @@ EPOCHS="${EPOCHS:-12}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
 SEED="${SEED:-42}"
 THREADS="${THREADS:-4}"
+NUM_GPUS="${NUM_GPUS:-2}"
 L1_WEIGHT="${L1_WEIGHT:-1.0}"
 PERCEPTUAL_WEIGHT="${PERCEPTUAL_WEIGHT:-1.0}"
 SSIM_WEIGHT="${SSIM_WEIGHT:-0.0}"
@@ -55,6 +56,7 @@ for model in "${MODELS[@]}"; do
     --lr "${LEARNING_RATE}" \
     --seed "${SEED}" \
     --threads "${THREADS}" \
+    --num-gpus "${NUM_GPUS}" \
     --l1-weight "${L1_WEIGHT}" \
     --perceptual-weight "${PERCEPTUAL_WEIGHT}" \
     --ssim-weight "${SSIM_WEIGHT}" \
