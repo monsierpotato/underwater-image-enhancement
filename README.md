@@ -122,6 +122,53 @@ python train.py \
     --early_stop_patience 20
 ```
 
+### Fast ASPP + Mamba architecture screen (Kaggle)
+
+Three bottleneck-context ablations are available alongside the unchanged
+U-Net baseline:
+
+| Model prefix | Bottleneck context |
+|---|---|
+| `asppunet` | DeepLab-style ASPP |
+| `mambabottleneck` | Two projected VSS/Mamba blocks at H/16 |
+| `mambaaspp` | ASPP followed by the projected Mamba blocks |
+
+The context branches are residual and retain the standard U-Net
+encoder/decoder. This makes the comparison isolate context modelling rather
+than changing the whole backbone.
+
+In a Kaggle notebook, enable a GPU accelerator and run:
+
+```bash
+!git clone https://github.com/heniath/underwater-image-enhancement.git
+%cd underwater-image-enhancement
+
+# PyTorch is preinstalled on Kaggle. The fused scan is strongly recommended.
+!pip install -e .
+!pip install mamba-ssm --no-build-isolation
+
+# Replace this with the actual EUVP directory shown under /kaggle/input.
+!DATA_ROOT=/kaggle/input/euvp-dataset/EUVP \
+  OUTPUT_ROOT=/kaggle/working/fast_screen \
+  bash scripts/experiments/run_fast_context_screen.sh
+```
+
+The runner trains `unet_5ch`, `asppunet_5ch`,
+`mambabottleneck_5ch`, and `mambaaspp_5ch` for 12 epochs on the same
+`underwater_scenes` split and prints a validation ranking at the end. It does
+not use the held-out test set for model selection.
+
+Settings can be overridden without editing the script:
+
+```bash
+DATA_ROOT=/kaggle/input/.../EUVP \
+BATCH_SIZE=4 EPOCHS=20 SEED=123 PRIOR_METHOD=gupdm \
+bash scripts/experiments/run_fast_context_screen.sh
+```
+
+Promote a candidate when it gains roughly 0.20 dB validation PSNR without a
+material SSIM loss. Confirm it with multiple seeds before a full-data run.
+
 Key arguments (see `data/options.py` for the full list):
 
 | Argument | Default | Description |

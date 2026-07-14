@@ -18,7 +18,8 @@ Naming convention
 -----------------
     <backbone>_<variant>
 
-   backbone : unet | resnet | mobilenet | mambavision | mambaunet
+   backbone : unet | asppunet | mambabottleneck | mambaaspp | resnet |
+              mobilenet | mambavision | mambaunet
   variant  : 3ch | 4ch_t | 4ch_b | 5ch
 
 Physics modes
@@ -37,7 +38,16 @@ import torch.nn as nn
 # Supported names
 # ---------------------------------------------------------------------------
 
-_BACKBONES = ("unet", "resnet", "mobilenet", "mambavision", "mambaunet")
+_BACKBONES = (
+    "unet",
+    "asppunet",
+    "mambabottleneck",
+    "mambaaspp",
+    "resnet",
+    "mobilenet",
+    "mambavision",
+    "mambaunet",
+)
 
 _VARIANTS = {
     "3ch": (3, "none"),
@@ -126,6 +136,16 @@ def build_model(name: str, pretrained_backbone: bool = True) -> nn.Module:
         from .unet import UNet5ch
 
         return UNet5ch(in_channels=in_channels)
+
+    if backbone in {"asppunet", "mambabottleneck", "mambaaspp"}:
+        from .context_unet import ASPPUNet, MambaASPPUNet, MambaBottleneckUNet
+
+        model_classes = {
+            "asppunet": ASPPUNet,
+            "mambabottleneck": MambaBottleneckUNet,
+            "mambaaspp": MambaASPPUNet,
+        }
+        return model_classes[backbone](in_channels=in_channels)
 
     if backbone == "resnet":
         from .resnet_unet import ResNetUNet

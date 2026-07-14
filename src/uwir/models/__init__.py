@@ -4,6 +4,10 @@ from .registry import ALL_MODEL_NAMES, ModelSpec, build_model, parse_model_varia
 
 __all__ = [
     "ALL_MODEL_NAMES",
+    "ASPPUNet",
+    "ContextUNet",
+    "MambaASPPUNet",
+    "MambaBottleneckUNet",
     "MambaUNet",
     "MambaVisionUNet",
     "MobileNetUNet",
@@ -16,6 +20,10 @@ __all__ = [
 
 
 _ARCHITECTURES = {
+    "ASPPUNet": ("context_unet", "ASPPUNet"),
+    "ContextUNet": ("context_unet", "ContextUNet"),
+    "MambaASPPUNet": ("context_unet", "MambaASPPUNet"),
+    "MambaBottleneckUNet": ("context_unet", "MambaBottleneckUNet"),
     "MambaUNet": ("mamba_unet", "MambaUNet"),
     "MambaVisionUNet": ("mambavision_unet", "MambaVisionUNet"),
     "MobileNetUNet": ("mobilenet_unet", "MobileNetUNet"),
