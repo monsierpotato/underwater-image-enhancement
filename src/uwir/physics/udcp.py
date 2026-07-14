@@ -51,7 +51,7 @@ def estimate_background_light(
 
     n_pixels = dark_gb.size
     n_top = max(1, int(n_pixels * percentile / 100.0))
-    flat_idx = np.argsort(dark_gb.flatten())[-n_top:]
+    flat_idx = np.argpartition(dark_gb.flatten(), -n_top)[-n_top:]
     h_idx, w_idx = np.unravel_index(flat_idx, dark_gb.shape)
 
     # Among candidates, pick the brightest overall pixel
@@ -83,8 +83,8 @@ def _guided_filter(
     Returns:
         ndarray: (H, W) float32 filtered output.
     """
-    guide = guide.astype(np.float64)
-    src = src.astype(np.float64)
+    guide = guide.astype(np.float32)
+    src = src.astype(np.float32)
     ksize = (2 * radius + 1, 2 * radius + 1)
 
     def box(img: np.ndarray) -> np.ndarray:
@@ -104,7 +104,7 @@ def _guided_filter(
 
     ma = box(a) / N
     mb = box(b) / N
-    return (ma * guide + mb).astype(np.float32)
+    return (ma * guide + mb)
 
 
 # ---------------------------------------------------------------------------
