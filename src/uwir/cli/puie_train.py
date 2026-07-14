@@ -46,34 +46,27 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils.data as data
-from torch.distributions import Normal, Independent, kl_divergence
+from torch.distributions import Independent, Normal, kl_divergence
 
-# ---- Reuse this repo's building blocks & plumbing -------------------------
-from net.unet import DoubleConv, Down, Up
-from net.registry import parse_model_variant
-from data.options import option
-from data.data import (
-    get_euvp_training_set,
-    get_uieb_training_set,
-    get_ufo120_training_set,
-)
-from loss import CompositeLoss
-from measure_underwater import evaluate_loader
 # Helpers already defined in train.py (importing train.py does NOT run main —
 # it is guarded by `if __name__ == "__main__"`).
-from train import (
+from uwir.cli.train import (
     EarlyStopping,
-    build_scheduler,
-    save_ckpt,
-    load_ckpt,
     _collate_train,
-    _unwrap,
+    build_scheduler,
+    load_ckpt,
+    save_ckpt,
 )
+from uwir.config import option
+from uwir.models import parse_model_variant
 
+# ---- Reuse this repo's building blocks & plumbing -------------------------
+from uwir.models.unet import DoubleConv, Down, Up
 
 # ===========================================================================
 # Backbone: U-Net that returns full-resolution 64-channel features (no head)
 # ===========================================================================
+
 
 class UNetFeatures(nn.Module):
     """
@@ -107,9 +100,9 @@ class UNetFeatures(nn.Module):
 
         # Decoder  (from_below, skip, out)
         self.dec4 = Up(f[3] * 2, f[3], f[3], bilinear)
-        self.dec3 = Up(f[3],     f[2], f[2], bilinear)
-        self.dec2 = Up(f[2],     f[1], f[1], bilinear)
-        self.dec1 = Up(f[1],     f[0], f[0], bilinear)
+        self.dec3 = Up(f[3], f[2], f[2], bilinear)
+        self.dec2 = Up(f[2], f[1], f[1], bilinear)
+        self.dec1 = Up(f[1], f[0], f[0], bilinear)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         e1 = self.enc1(x)
@@ -121,13 +114,14 @@ class UNetFeatures(nn.Module):
         d4 = self.dec4(bn, e4)
         d3 = self.dec3(d4, e3)
         d2 = self.dec2(d3, e2)
-        d1 = self.dec1(d2, e1)      # (N, f[0], H, W)
+        d1 = self.dec1(d2, e1)  # (N, f[0], H, W)
         return d1
 
 
 # ===========================================================================
 # Latent head: PUIE's "Compute_z" adapted to arbitrary feature width
 # ===========================================================================
+
 
 class LatentDist(nn.Module):
     """
@@ -150,10 +144,10 @@ class LatentDist(nn.Module):
 
     @staticmethod
     def _to_dist(mu_log_sigma, latent_dim):
-        mu_log_sigma = mu_log_sigma.squeeze(-1).squeeze(-1)        # (N, 2z)
-        mu        = mu_log_sigma[:, :latent_dim]
+        mu_log_sigma = mu_log_sigma.squeeze(-1).squeeze(-1)  # (N, 2z)
+        mu = mu_log_sigma[:, :latent_dim]
         log_sigma = mu_log_sigma[:, latent_dim:]
-        sigma     = torch.exp(log_sigma)
+        sigma = torch.exp(log_sigma)
         dist = Independent(Normal(loc=mu, scale=sigma), 1)
         return dist, mu, sigma
 
@@ -172,6 +166,7 @@ class LatentDist(nn.Module):
 # ===========================================================================
 # PUIE-UNet model
 # ===========================================================================
+
 
 class PUIEUNet(nn.Module):
     """
@@ -198,32 +193,32 @@ class PUIEUNet(nn.Module):
     ):
         super().__init__()
         self.in_channels = in_channels
-        self.latent_dim  = latent_dim
+        self.latent_dim = latent_dim
         feat_ch = features[0]
 
         # Prior sees the input; posterior also sees the 3-ch GT.
-        self.prior_net = UNetFeatures(in_channels,     features)
-        self.post_net  = UNetFeatures(in_channels + 3, features)
+        self.prior_net = UNetFeatures(in_channels, features)
+        self.post_net = UNetFeatures(in_channels + 3, features)
 
         self.prior_dist = LatentDist(feat_ch, latent_dim)
-        self.post_dist  = LatentDist(feat_ch, latent_dim)
+        self.post_dist = LatentDist(feat_ch, latent_dim)
 
         # Map latent codes back to feature-channel modulation parameters.
-        self.conv_u  = nn.Conv2d(latent_dim, feat_ch, kernel_size=1)
-        self.conv_s  = nn.Conv2d(latent_dim, feat_ch, kernel_size=1)
+        self.conv_u = nn.Conv2d(latent_dim, feat_ch, kernel_size=1)
+        self.conv_s = nn.Conv2d(latent_dim, feat_ch, kernel_size=1)
         self.insnorm = nn.InstanceNorm2d(feat_ch)
 
         # Refinement + RGB head.
         self.refine = DoubleConv(feat_ch, feat_ch)
-        self.head   = nn.Sequential(
+        self.head = nn.Sequential(
             nn.Conv2d(feat_ch, 3, kernel_size=1),
             nn.Sigmoid(),
         )
 
     # -- FiLM-style latent injection (PUIE): IN(feat) * |s| + u -------------
     def _inject(self, feat, latent_u, latent_s):
-        u = self.conv_u(latent_u.unsqueeze(-1).unsqueeze(-1))   # (N, C, 1, 1)
-        s = self.conv_s(latent_s.unsqueeze(-1).unsqueeze(-1))   # (N, C, 1, 1)
+        u = self.conv_u(latent_u.unsqueeze(-1).unsqueeze(-1))  # (N, C, 1, 1)
+        s = self.conv_s(latent_s.unsqueeze(-1).unsqueeze(-1))  # (N, C, 1, 1)
         return self.insnorm(feat) * torch.abs(s) + u
 
     def _decode(self, feat, latent_u, latent_s):
@@ -232,20 +227,21 @@ class PUIEUNet(nn.Module):
 
     def forward(self, x: torch.Tensor, y: torch.Tensor = None, num_samples: int = 1):
         prior_feat = self.prior_net(x)
-        (pr_u_dist, pr_s_dist,
-         pr_u_mu, _, pr_s_mu, _) = self.prior_dist(prior_feat)
+        (pr_u_dist, pr_s_dist, pr_u_mu, _, pr_s_mu, _) = self.prior_dist(prior_feat)
 
         # -------- Training: use the posterior, return ELBO's KL term -------
         if y is not None:
             post_feat = self.post_net(torch.cat([x, y], dim=1))
             po_u_dist, po_s_dist, *_ = self.post_dist(post_feat)
 
-            latent_u = po_u_dist.rsample()          # reparameterised sample
+            latent_u = po_u_dist.rsample()  # reparameterised sample
             latent_s = po_s_dist.rsample()
             out = self._decode(prior_feat, latent_u, latent_s)
 
-            kl = (kl_divergence(po_u_dist, pr_u_dist).mean()
-                  + kl_divergence(po_s_dist, pr_s_dist).mean())
+            kl = (
+                kl_divergence(po_u_dist, pr_u_dist).mean()
+                + kl_divergence(po_s_dist, pr_s_dist).mean()
+            )
             return out, kl
 
         # -------- Inference: prior only -----------------------------------
@@ -266,14 +262,16 @@ class PUIEUNet(nn.Module):
 # Train / validate epoch loops (ELBO = reconstruction + beta * KL)
 # ===========================================================================
 
+
 def train_epoch(model, loader, optimizer, criterion, device, kl_weight, grad_clip):
     model.train()
     tot_loss = 0.0
     tot_recon = 0.0
-    tot_kl    = 0.0
+    tot_kl = 0.0
 
     try:
         from tqdm.auto import tqdm
+
         pbar = tqdm(loader, desc="Training Batch", leave=False, mininterval=2.0)
     except ImportError:
         pbar = loader
@@ -282,8 +280,8 @@ def train_epoch(model, loader, optimizer, criterion, device, kl_weight, grad_cli
         inp, gt = inp.to(device), gt.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        pred, kl = model(inp, gt)                    # posterior path
-        recon, _ = criterion(pred, gt)               # L1 + VGG + SSIM
+        pred, kl = model(inp, gt)  # posterior path
+        recon, _ = criterion(pred, gt)  # L1 + VGG + SSIM
         loss = recon + kl_weight * kl
 
         loss.backward()
@@ -291,9 +289,9 @@ def train_epoch(model, loader, optimizer, criterion, device, kl_weight, grad_cli
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        tot_loss  += loss.item()
+        tot_loss += loss.item()
         tot_recon += recon.item()
-        tot_kl    += kl.item()
+        tot_kl += kl.item()
 
     n = len(loader)
     return tot_loss / n, {"recon": tot_recon / n, "kl": tot_kl / n}
@@ -305,7 +303,7 @@ def val_loss_epoch(model, loader, criterion, device, kl_weight):
     tot = 0.0
     for inp, gt in loader:
         inp, gt = inp.to(device), gt.to(device)
-        pred, kl = model(inp, gt)                     # posterior available at val
+        pred, kl = model(inp, gt)  # posterior available at val
         recon, _ = criterion(pred, gt)
         tot += (recon + kl_weight * kl).item()
     return tot / len(loader)
@@ -315,22 +313,44 @@ def val_loss_epoch(model, loader, criterion, device, kl_weight):
 # Main
 # ===========================================================================
 
+
 def main():
     # ------------------------------------------------------------------
     # Arguments: reuse the repo's option() and add PUIE-specific knobs.
     # ------------------------------------------------------------------
     parser = option()
-    parser.add_argument('--latent_dim', type=int, default=20,
-                        help='Dimensionality of each (u / s) latent code (PUIE default 20)')
-    parser.add_argument('--kl_weight', type=float, default=1.0,
-                        help='Max weight (beta) on the KL term of the ELBO')
-    parser.add_argument('--kl_anneal_epochs', type=int, default=20,
-                        help='Linearly ramp the KL weight from 0 to --kl_weight '
-                             'over this many epochs (0 = no annealing)')
-    parser.add_argument('--num_samples', type=int, default=1,
-                        help='Prior samples to average at validation-metric time '
-                             '(1 = deterministic MC mode; >1 = MP ensemble)')
+    parser.add_argument(
+        "--latent_dim",
+        type=int,
+        default=20,
+        help="Dimensionality of each (u / s) latent code (PUIE default 20)",
+    )
+    parser.add_argument(
+        "--kl_weight", type=float, default=1.0, help="Max weight (beta) on the KL term of the ELBO"
+    )
+    parser.add_argument(
+        "--kl_anneal_epochs",
+        type=int,
+        default=20,
+        help="Linearly ramp the KL weight from 0 to --kl_weight "
+        "over this many epochs (0 = no annealing)",
+    )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=1,
+        help="Prior samples to average at validation-metric time "
+        "(1 = deterministic MC mode; >1 = MP ensemble)",
+    )
     args = parser.parse_args()
+
+    from uwir.data.factory import (
+        get_euvp_training_set,
+        get_ufo120_training_set,
+        get_uieb_training_set,
+    )
+    from uwir.losses import CompositeLoss
+    from uwir.metrics import evaluate_loader
 
     # ------------------------------------------------------------------
     # Device & reproducibility
@@ -355,50 +375,72 @@ def main():
     # ------------------------------------------------------------------
     model = PUIEUNet(in_channels=in_channels, latent_dim=args.latent_dim).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model     : PUIE-UNet  (in_channels={in_channels}, physics={physics_mode}, "
-          f"latent_dim={args.latent_dim}, params={n_params/1e6:.2f}M)")
+    print(
+        f"Model     : PUIE-UNet  (in_channels={in_channels}, physics={physics_mode}, "
+        f"latent_dim={args.latent_dim}, params={n_params / 1e6:.2f}M)"
+    )
 
     # ------------------------------------------------------------------
     # Datasets & DataLoaders  (physics channels appended in the collate)
     # ------------------------------------------------------------------
-    collate_fn = lambda b: _collate_train(b, physics_mode)
+    def collate_fn(batch):
+        return _collate_train(batch, physics_mode)
 
     if args.dataset == "euvp":
         train_ds = get_euvp_training_set(
-            args.data_train_euvp, img_size=args.cropSize,
-            subset=args.euvp_subset, in_memory=args.in_memory)
+            args.data_train_euvp,
+            img_size=args.cropSize,
+            subset=args.euvp_subset,
+            in_memory=args.in_memory,
+        )
     elif args.dataset == "uieb":
         train_ds = get_uieb_training_set(
-            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory)
+            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory
+        )
     elif args.dataset == "ufo120":
         train_ds = get_ufo120_training_set(
-            args.data_train_euvp, img_size=args.cropSize, in_memory=args.in_memory)
+            args.data_train_euvp, img_size=args.cropSize, in_memory=args.in_memory
+        )
     elif args.dataset == "euvp+uieb":
         euvp_ds = get_euvp_training_set(
-            args.data_train_euvp, img_size=args.cropSize,
-            subset=args.euvp_subset, in_memory=args.in_memory)
+            args.data_train_euvp,
+            img_size=args.cropSize,
+            subset=args.euvp_subset,
+            in_memory=args.in_memory,
+        )
         uieb_ds = get_uieb_training_set(
-            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory)
+            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory
+        )
         train_ds = data.ConcatDataset([euvp_ds, uieb_ds])
     else:
         raise ValueError(f"Unknown --dataset: {args.dataset}")
 
     # 10% paired hold-out for validation (gives GT for loss + metrics).
-    n_val   = max(1, int(len(train_ds) * 0.10))
+    n_val = max(1, int(len(train_ds) * 0.10))
     n_train = len(train_ds) - n_val
     train_ds, val_ds = data.random_split(
-        train_ds, [n_train, n_val],
-        generator=torch.Generator().manual_seed(args.seed))
+        train_ds, [n_train, n_val], generator=torch.Generator().manual_seed(args.seed)
+    )
     print(f"Dataset   : {args.dataset}  (train={n_train}, val={n_val})")
 
     train_loader = data.DataLoader(
-        train_ds, batch_size=args.batchSize, shuffle=args.shuffle,
-        num_workers=args.threads, pin_memory=device.type == "cuda",
-        drop_last=True, collate_fn=collate_fn)
+        train_ds,
+        batch_size=args.batchSize,
+        shuffle=args.shuffle,
+        num_workers=args.threads,
+        pin_memory=device.type == "cuda",
+        drop_last=True,
+        collate_fn=collate_fn,
+    )
     val_loader = data.DataLoader(
-        val_ds, batch_size=args.batchSize, shuffle=False,
-        num_workers=args.threads, pin_memory=device.type == "cuda",
-        drop_last=False, collate_fn=collate_fn)
+        val_ds,
+        batch_size=args.batchSize,
+        shuffle=False,
+        num_workers=args.threads,
+        pin_memory=device.type == "cuda",
+        drop_last=False,
+        collate_fn=collate_fn,
+    )
 
     print(f"Train set : {len(train_ds)} samples ({len(train_loader)} batches of {args.batchSize})")
     print(f"Val set   : {len(val_ds)} samples")
@@ -407,21 +449,29 @@ def main():
     # Loss (reconstruction term), optimizer, scheduler
     # ------------------------------------------------------------------
     criterion = CompositeLoss(
-        lambda_l1=args.L1_weight, lambda_perc=args.perceptual_weight,
-        lambda_ssim=args.SSIM_weight, device=device)
+        lambda_l1=args.L1_weight,
+        lambda_perc=args.perceptual_weight,
+        lambda_ssim=args.SSIM_weight,
+        device=device,
+    )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = build_scheduler(optimizer, args)
-    print(f"Optimizer : Adam (lr={args.lr})  |  KL beta={args.kl_weight} "
-          f"(anneal {args.kl_anneal_epochs} epochs)")
+    print(
+        f"Optimizer : Adam (lr={args.lr})  |  KL beta={args.kl_weight} "
+        f"(anneal {args.kl_anneal_epochs} epochs)"
+    )
 
     # ------------------------------------------------------------------
     # Checkpoint directory
     # ------------------------------------------------------------------
-    RUN_TS = datetime.now().strftime('%Y%m%d_%H%M%S')
-    RUN_ID = (f"{args.run_name.strip()}_{RUN_TS}" if args.run_name.strip()
-              else f"puie_unet_{args.dataset}_{RUN_TS}")
-    CKPT_DIR  = os.path.join(args.checkpoint_dir, RUN_ID)
+    RUN_TS = datetime.now().strftime("%Y%m%d_%H%M%S")
+    RUN_ID = (
+        f"{args.run_name.strip()}_{RUN_TS}"
+        if args.run_name.strip()
+        else f"puie_unet_{args.dataset}_{RUN_TS}"
+    )
+    CKPT_DIR = os.path.join(args.checkpoint_dir, RUN_ID)
     BEST_PATH = os.path.join(CKPT_DIR, "best_model.pth")
     LAST_PATH = os.path.join(CKPT_DIR, "last_model.pth")
     os.makedirs(CKPT_DIR, exist_ok=True)
@@ -442,11 +492,13 @@ def main():
     es = EarlyStopping(patience=args.early_stop_patience, min_delta=1e-4, mode="max")
     LOG_EVERY = max(1, args.nEpochs // 20)
 
-    print(f"\n{'='*72}")
+    print(f"\n{'=' * 72}")
     print(f"  Training PUIE-UNet   epochs={args.nEpochs}   batch={args.batchSize}")
-    print(f"{'='*72}")
-    print(f"{'Epoch':>6}  {'TrainL':>8}  {'Recon':>8}  {'KL':>8}  {'ValL':>8}  "
-          f"{'PSNR':>7}  {'SSIM':>7}  {'LR':>9}  {'Time':>6}")
+    print(f"{'=' * 72}")
+    print(
+        f"{'Epoch':>6}  {'TrainL':>8}  {'Recon':>8}  {'KL':>8}  {'ValL':>8}  "
+        f"{'PSNR':>7}  {'SSIM':>7}  {'LR':>9}  {'Time':>6}"
+    )
     print("-" * 72)
 
     train_start = time.time()
@@ -461,7 +513,8 @@ def main():
             kl_w = args.kl_weight
 
         tr_loss, tr_parts = train_epoch(
-            model, train_loader, optimizer, criterion, device, kl_w, args.grad_clip)
+            model, train_loader, optimizer, criterion, device, kl_w, args.grad_clip
+        )
         vl_loss = val_loss_epoch(model, val_loader, criterion, device, kl_w)
 
         # Full-reference metrics use the prior path (model(inp) → pred).
@@ -473,7 +526,7 @@ def main():
             val_ssim = history["val_ssim"][-1] if history["val_ssim"] else 0.0
 
         scheduler.step()
-        cur_lr  = optimizer.param_groups[0]["lr"]
+        cur_lr = optimizer.param_groups[0]["lr"]
         elapsed = time.time() - t0
 
         history["train_loss"].append(tr_loss)
@@ -484,33 +537,47 @@ def main():
 
         if val_psnr > best_psnr + 1e-4:
             best_psnr, best_epoch = val_psnr, epoch
-            save_ckpt(model, optimizer, epoch,
-                      {"psnr": val_psnr, "ssim": val_ssim, "val_loss": vl_loss}, BEST_PATH)
+            save_ckpt(
+                model,
+                optimizer,
+                epoch,
+                {"psnr": val_psnr, "ssim": val_ssim, "val_loss": vl_loss},
+                BEST_PATH,
+            )
             flag = "  ← BEST ✓"
         else:
             flag = ""
 
         if epoch % args.snapshots == 0:
-            save_ckpt(model, optimizer, epoch, {"psnr": val_psnr, "ssim": val_ssim},
-                      os.path.join(CKPT_DIR, f"epoch_{epoch:04d}.pth"))
+            save_ckpt(
+                model,
+                optimizer,
+                epoch,
+                {"psnr": val_psnr, "ssim": val_ssim},
+                os.path.join(CKPT_DIR, f"epoch_{epoch:04d}.pth"),
+            )
 
         if epoch == 1 or epoch % LOG_EVERY == 0 or flag:
-            print(f"{epoch:>6}  {tr_loss:>8.4f}  {tr_parts['recon']:>8.4f}  "
-                  f"{tr_parts['kl']:>8.4f}  {vl_loss:>8.4f}  {val_psnr:>7.3f}  "
-                  f"{val_ssim:>7.4f}  {cur_lr:>9.2e}  {elapsed:>5.1f}s{flag}")
+            print(
+                f"{epoch:>6}  {tr_loss:>8.4f}  {tr_parts['recon']:>8.4f}  "
+                f"{tr_parts['kl']:>8.4f}  {vl_loss:>8.4f}  {val_psnr:>7.3f}  "
+                f"{val_ssim:>7.4f}  {cur_lr:>9.2e}  {elapsed:>5.1f}s{flag}"
+            )
 
         if es(val_psnr):
-            print(f"\nEarly stopping at epoch {epoch} "
-                  f"(no PSNR improvement for {args.early_stop_patience} evals)")
+            print(
+                f"\nEarly stopping at epoch {epoch} "
+                f"(no PSNR improvement for {args.early_stop_patience} evals)"
+            )
             break
 
     save_ckpt(model, optimizer, epoch, {"psnr": val_psnr, "ssim": val_ssim}, LAST_PATH)
 
     total_min = (time.time() - train_start) / 60
-    print(f"\n{'='*72}")
+    print(f"\n{'=' * 72}")
     print(f"  Done.  Best PSNR: {best_psnr:.4f} dB at epoch {best_epoch}")
     print(f"  Total training time: {total_min:.1f} min")
-    print(f"{'='*72}")
+    print(f"{'=' * 72}")
 
     with open(os.path.join(CKPT_DIR, "training_history.json"), "w") as f:
         json.dump(history, f, indent=2)

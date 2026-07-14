@@ -27,6 +27,11 @@ kornia>=0.7.0
 # --- Profiling ---
 thop>=0.1.1
 
+# --- Experiment visualization (optional for core training) ---
+matplotlib>=3.8.0
+pandas>=2.0.0
+seaborn>=0.13.0
+
 # --- MambaVision backbone (NVIDIA 2024 hybrid Mamba+Transformer) ---
 # Uses the HuggingFace transformers backend (pure-PyTorch, Windows/CPU-compatible).
 # Pretrained weights download automatically from nvidia/MambaVision-{T,S,B}-1K

@@ -1,13 +1,25 @@
-from .unet import UNet5ch
-from .resnet_unet import ResNetUNet
-from .mobilenet_unet import MobileNetUNet
-from .mambavision_unet import MambaVisionUNet
-from .mamba_unet import MambaUNet
-from .physics import compute_physics_maps, estimate_background_light, estimate_transmission_udcp
-from .physics_gdcp import compute_physics_maps as compute_physics_maps_gdcp
-from .physics_gupdm import compute_physics_maps as compute_physics_maps_gupdm
-from .physics_gupdm import compute_gupdm_feature_maps
-from .registry import build_model, parse_model_variant, ALL_MODEL_NAMES
+"""Compatibility exports for the historical :mod:`net` package."""
+
+import _bootstrap  # noqa: F401
+from uwir.models import (
+    ALL_MODEL_NAMES,
+    MambaUNet,
+    MambaVisionUNet,
+    MobileNetUNet,
+    ResNetUNet,
+    UNet5ch,
+    build_model,
+    parse_model_variant,
+)
+from uwir.physics import (
+    compute_gupdm_feature_maps,
+    compute_physics_maps,
+    compute_physics_maps_gdcp,
+    compute_physics_maps_gupdm,
+    estimate_background_light,
+    estimate_transmission_udcp,
+)
+
 __all__ = [
     "UNet5ch",
     "ResNetUNet",

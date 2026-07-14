@@ -28,7 +28,13 @@ conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvi
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
+
+The editable install exposes the preferred commands `uwir-train`,
+`uwir-evaluate`, `uwir-profile`, `uwir-puie-train`, and
+`uwir-puie-evaluate`. The historical scripts remain available as compatibility
+entry points.
 
 > **Note**: PyTorch is already installed via conda, so pip will skip it.
 > If pip tries to reinstall a CPU-only build, use
@@ -237,27 +243,49 @@ Prints inference time, parameter count (M), and FLOPs (G) for a `256×256` input
 
 ```
 underwater-image-enhancement/
-├── data/
-│   ├── UWIRdataset.py   — UIEB, EUVP, UFO-120, U45 dataset classes
-│   ├── data.py          — Dataset factory functions
-│   ├── eval_sets.py     — Padded / simple eval loaders
-│   ├── options.py       — All training arguments (argparse)
-│   ├── scheduler.py     — GradualWarmup, CosineRestartLR schedulers
-│   └── util.py          — is_image_file, load_img helpers
-├── net/
-│   ├── unet.py          — UNet5ch model (3- or 5-channel input)
-│   └── physics.py       — UDCP transmission map + background light
-├── loss/
-│   └── losses.py        — CompositeLoss (L1 + VGG Perceptual + SSIM)
-├── measure_underwater.py — PSNR, SSIM, CIEDE2000, UCIQE, UIQM metrics
-├── train.py             — Main training loop (deterministic U-Net)
-├── PUIE-Unet.py         — PUIE-UNet model + probabilistic (ELBO) training loop
-├── PUIE-Unet-test.py    — PUIE-UNet inference / evaluation (MC & MP modes)
-├── eval.py              — Test-set evaluation
-├── net_test.py          — Model profiling (time / params / FLOPs)
-├── requirements.txt     — pip dependencies
+├── src/uwir/             — Installable library and command implementations
+│   ├── data/             — Dataset classes, transforms, and factories
+│   ├── models/           — Architectures and the central model registry
+│   ├── physics/          — UDCP, GDCP, and GUPDM priors
+│   ├── training/         — Schedulers and reusable training utilities
+│   ├── cli/              — Training, evaluation, PUIE, and profiling commands
+│   ├── config.py         — Typed configuration and CLI compatibility aliases
+│   ├── losses.py         — Composite loss implementation
+│   └── metrics.py        — Full- and no-reference underwater metrics
+├── scripts/              — Experiments, visualization, and diagnostics
+├── tests/                — Isolated pytest unit and smoke tests
+├── data/, net/, loss/    — Compatibility imports for existing user code
+├── train.py, eval.py     — Compatibility command wrappers
+├── pyproject.toml        — Packaging, Ruff, pytest, and console commands
 └── README.md
 ```
+
+New code should import from `uwir`, for example:
+
+```python
+from uwir.data import EUVPDataset
+from uwir.models import build_model, parse_model_variant
+```
+
+Legacy imports such as `from data.UWIRdataset import EUVPDataset` continue to
+resolve to the same class.
+
+## Development
+
+```bash
+pip install -e '.[dev]'
+ruff format --check .
+ruff check .
+pytest
+```
+
+Generated datasets, checkpoints, logs, figures, reports, and temporary
+artifacts are intentionally excluded from version control. Existing local
+artifacts are not removed by the cleanup.
+
+Runtime outputs are written beneath the current working directory by default:
+`./checkpoints`, `./logs`, and `./results`. Override these with the relevant
+CLI output-directory options when running from another location.
 
 ---
 

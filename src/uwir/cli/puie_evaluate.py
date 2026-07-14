@@ -30,41 +30,29 @@ Examples
         --val_folder ./results/puie_u45
 """
 
-import importlib.util
 import os
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils.data as data
-import torchvision.transforms as T
 from PIL import Image
 
-from data.options import option
-from data.util import is_image_file
-from net.registry import parse_model_variant
-from measure_underwater import evaluate_loader
-from train import load_ckpt, _add_physics_channels
-
+from uwir.cli.puie_train import PUIEUNet
+from uwir.cli.train import _add_physics_channels, load_ckpt
+from uwir.config import option
+from uwir.data.utils import is_image_file
+from uwir.models import parse_model_variant
 
 # ---------------------------------------------------------------------------
 # Import PUIEUNet from the (hyphenated) training file.
 # A hyphen isn't import-friendly, so load it by path.
 # ---------------------------------------------------------------------------
 
-def _load_puie_unet_class():
-    here = os.path.dirname(os.path.abspath(__file__))
-    spec = importlib.util.spec_from_file_location(
-        "puie_unet_train", os.path.join(here, "PUIE-Unet.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.PUIEUNet
-
-
 # ---------------------------------------------------------------------------
 # MP wrapper: makes model(inp) average N prior samples so the existing
 # evaluate_loader (which calls model(inp) with no kwargs) gets MP output.
 # ---------------------------------------------------------------------------
+
 
 class _MPWrapper(nn.Module):
     def __init__(self, model, num_samples):
@@ -80,14 +68,20 @@ class _MPWrapper(nn.Module):
 # Datasets
 # ---------------------------------------------------------------------------
 
+
 class _PairedTestDataset(data.Dataset):
     """Paired input/GT folders, matched by filename stem."""
 
     def __init__(self, inp_dir, gt_dir, img_size):
-        self.resize    = T.Resize((img_size, img_size), antialias=True)
-        self.to_tensor = T.ToTensor()
-        gt_map = {os.path.splitext(f)[0]: os.path.join(gt_dir, f)
-                  for f in os.listdir(gt_dir) if is_image_file(f)}
+        import torchvision.transforms as transforms
+
+        self.resize = transforms.Resize((img_size, img_size), antialias=True)
+        self.to_tensor = transforms.ToTensor()
+        gt_map = {
+            os.path.splitext(f)[0]: os.path.join(gt_dir, f)
+            for f in os.listdir(gt_dir)
+            if is_image_file(f)
+        }
         self.pairs, self.names = [], []
         for f in sorted(os.listdir(inp_dir)):
             if not is_image_file(f):
@@ -103,7 +97,7 @@ class _PairedTestDataset(data.Dataset):
     def __getitem__(self, idx):
         inp_p, gt_p = self.pairs[idx]
         inp = self.to_tensor(self.resize(Image.open(inp_p).convert("RGB")))
-        gt  = self.to_tensor(self.resize(Image.open(gt_p ).convert("RGB")))
+        gt = self.to_tensor(self.resize(Image.open(gt_p).convert("RGB")))
         return inp, gt, self.names[idx], self.names[idx]
 
 
@@ -111,10 +105,13 @@ class _UnpairedTestDataset(data.Dataset):
     """Flat folder of input images, no ground truth."""
 
     def __init__(self, inp_dir, img_size):
-        self.resize    = T.Resize((img_size, img_size), antialias=True)
-        self.to_tensor = T.ToTensor()
-        self.files = [os.path.join(inp_dir, f) for f in sorted(os.listdir(inp_dir))
-                      if is_image_file(f)]
+        import torchvision.transforms as transforms
+
+        self.resize = transforms.Resize((img_size, img_size), antialias=True)
+        self.to_tensor = transforms.ToTensor()
+        self.files = [
+            os.path.join(inp_dir, f) for f in sorted(os.listdir(inp_dir)) if is_image_file(f)
+        ]
         self.names = [os.path.basename(f) for f in self.files]
 
     def __len__(self):
@@ -128,40 +125,53 @@ class _UnpairedTestDataset(data.Dataset):
 
 def main():
     parser = option()
-    parser.add_argument('--num_samples', type=int, default=8,
-                        help='Prior samples to average (1 = MC, >1 = MP ensemble)')
-    parser.add_argument('--latent_dim', type=int, default=20,
-                        help='Must match the value used during training')
-    parser.add_argument('--save_images', type=lambda v: v.lower() in ('1','true','yes','y'),
-                        default=True, help='Write enhanced images to --val_folder')
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=8,
+        help="Prior samples to average (1 = MC, >1 = MP ensemble)",
+    )
+    parser.add_argument(
+        "--latent_dim", type=int, default=20, help="Must match the value used during training"
+    )
+    parser.add_argument(
+        "--save_images",
+        type=lambda v: v.lower() in ("1", "true", "yes", "y"),
+        default=True,
+        help="Write enhanced images to --val_folder",
+    )
     args = parser.parse_args()
+
+    import torchvision.transforms as transforms
+
+    from uwir.metrics import evaluate_loader
 
     device = torch.device("cuda" if (args.gpu_mode and torch.cuda.is_available()) else "cpu")
     print(f"Device: {device}")
 
     if not (args.resume and os.path.isfile(args.resume)):
         raise FileNotFoundError(
-            "Pass a checkpoint via --resume, e.g. "
-            "--resume ./checkpoints/<run>/best_model.pth")
+            "Pass a checkpoint via --resume, e.g. --resume ./checkpoints/<run>/best_model.pth"
+        )
 
     _, in_channels, physics_mode = parse_model_variant(args.model)
 
     # ------------------------------------------------------------------
     # Build model + load weights
     # ------------------------------------------------------------------
-    PUIEUNet = _load_puie_unet_class()
     model = PUIEUNet(in_channels=in_channels, latent_dim=args.latent_dim).to(device)
     epoch, metrics = load_ckpt(args.resume, model, device=str(device))
     model.eval()
     print(f"Loaded    : {args.resume}  (epoch={epoch}, stored metrics={metrics})")
-    print(f"Model     : PUIE-UNet  (in_channels={in_channels}, physics={physics_mode}, "
-          f"num_samples={args.num_samples})")
+    print(
+        f"Model     : PUIE-UNet  (in_channels={in_channels}, physics={physics_mode}, "
+        f"num_samples={args.num_samples})"
+    )
 
     # ------------------------------------------------------------------
     # Pick the test source. Priority: paired UIEB (has GT) → else U45 (no GT).
     # ------------------------------------------------------------------
-    paired = (os.path.isdir(args.data_val_uieb) and
-              os.path.isdir(args.data_valgt_uieb))
+    paired = os.path.isdir(args.data_val_uieb) and os.path.isdir(args.data_valgt_uieb)
     if paired:
         ds = _PairedTestDataset(args.data_val_uieb, args.data_valgt_uieb, args.cropSize)
         print(f"Test set  : paired  ({len(ds)} images from {args.data_val_uieb})")
@@ -171,7 +181,8 @@ def main():
     else:
         raise FileNotFoundError(
             "No test data found. Provide either --data_val_uieb + --data_valgt_uieb "
-            "(paired) or --data_val_u45 (unpaired).")
+            "(paired) or --data_val_u45 (unpaired)."
+        )
 
     # Collate: append physics channels, keep names.
     def collate(batch):
@@ -182,20 +193,19 @@ def main():
             names.append(name)
         return torch.stack(inps), torch.stack(gts), names
 
-    loader = data.DataLoader(ds, batch_size=1, shuffle=False,
-                             num_workers=0, collate_fn=collate)
+    loader = data.DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, collate_fn=collate)
 
     # ------------------------------------------------------------------
     # Inference: save enhanced images (MP mode).
     # ------------------------------------------------------------------
     if args.save_images:
         os.makedirs(args.val_folder, exist_ok=True)
-        to_pil = T.ToPILImage()
+        to_pil = transforms.ToPILImage()
         with torch.no_grad():
             for inp, _, names in loader:
-                inp  = inp.to(device)
+                inp = inp.to(device)
                 pred = model(inp, num_samples=args.num_samples).clamp(0, 1).cpu()
-                for img, name in zip(pred, names):
+                for img, name in zip(pred, names, strict=True):
                     to_pil(img).save(os.path.join(args.val_folder, name))
         print(f"Saved enhanced images → {args.val_folder}")
 
@@ -206,11 +216,15 @@ def main():
     # ------------------------------------------------------------------
     if paired:
         metric_loader = data.DataLoader(
-            ds, batch_size=1, shuffle=False, num_workers=0,
+            ds,
+            batch_size=1,
+            shuffle=False,
+            num_workers=0,
             collate_fn=lambda b: (
                 torch.stack([_add_physics_channels(i, physics_mode) for i, *_ in b]),
                 torch.stack([g for _, g, *_ in b]),
-            ))
+            ),
+        )
         wrapped = _MPWrapper(model, args.num_samples).to(device).eval()
         res, n = evaluate_loader(wrapped, metric_loader, device)
         print(f"\n  TEST RESULTS  (n={n}, num_samples={args.num_samples})")
@@ -220,8 +234,10 @@ def main():
         print(f"  UCIQE     : {res['uciqe']:>8.4f}  (higher=better)")
         print(f"  UIQM      : {res['uiqm']:>8.4f}  (higher=better)")
     else:
-        print("\n  No ground truth → skipped reference metrics "
-              "(use eval scripts with UCIQE/UIQM for no-reference scoring).")
+        print(
+            "\n  No ground truth → skipped reference metrics "
+            "(use eval scripts with UCIQE/UIQM for no-reference scoring)."
+        )
 
 
 if __name__ == "__main__":

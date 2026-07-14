@@ -6,6 +6,12 @@ checkpoints/
 results/
 output/
 weights/
+tmp_ckpt*/
+artifacts/
+figures/
+logs/*.log
+logs/*.done
+logs/*_inner.sh
 
 # Python
 __pycache__/
@@ -16,3 +22,12 @@ __pycache__/
 
 # Datasets (too large for version control)
 datasets/
+datasets.zip
+
+# Reports and local tooling
+*.csv
+.pytest_cache/
+.ruff_cache/
+.coverage
+dist/
+build/

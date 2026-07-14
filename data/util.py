@@ -1,13 +1,6 @@
-from PIL import Image
+"""Compatibility exports for the legacy :mod:`data.util` module."""
 
+import _bootstrap  # noqa: F401
+from uwir.data.utils import is_image_file, load_img
 
-def is_image_file(filename):
-    return any(
-        filename.endswith(ext)
-        for ext in [".png", ".jpg", ".bmp", ".JPG", ".jpeg", ".PNG", ".JPEG"]
-    )
-
-
-def load_img(filepath):
-    img = Image.open(filepath).convert('RGB')
-    return img
+__all__ = ["is_image_file", "load_img"]
