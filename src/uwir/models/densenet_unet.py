@@ -49,6 +49,8 @@ Example::
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as cp
+
 
 # ---------------------------------------------------------------------------
 # Building blocks
@@ -141,12 +143,18 @@ class DenseBlock(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features = [x]
-        for layer in self.layers:
-            cat = torch.cat(features, dim=1)
-            new_feat = layer(cat)
-            features.append(new_feat)
-        return self.project(torch.cat(features, dim=1))
+        def _forward(x_in):
+            features = [x_in]
+            for layer in self.layers:
+                cat = torch.cat(features, dim=1)
+                new_feat = layer(cat)
+                features.append(new_feat)
+            return self.project(torch.cat(features, dim=1))
+
+        if self.training and x.requires_grad:
+            return cp.checkpoint(_forward, x, use_reentrant=False)
+        return _forward(x)
+
 
 
 class DenseDown(nn.Module):
