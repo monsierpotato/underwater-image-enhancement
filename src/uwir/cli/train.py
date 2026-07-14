@@ -149,11 +149,25 @@ def _collate_train(batch, physics_mode: str, physics_extractor=None):
             if files and isinstance(files[0], str) and files[0]:
                 img_path = files[0]
                 parent_dir = os.path.dirname(os.path.dirname(img_path))
-                cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
                 stem = os.path.splitext(os.path.basename(img_path))[0]
-                cache_path = os.path.join(cache_dir, f"{stem}.npz")
                 
-                if os.path.exists(cache_path):
+                # Check in dataset folder first
+                dataset_cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
+                dataset_cache_path = os.path.join(dataset_cache_dir, f"{stem}.npz")
+                
+                # Check in local working directory fallback folder
+                import hashlib
+                path_hash = hashlib.md5(parent_dir.encode('utf-8')).hexdigest()
+                local_cache_dir = os.path.join(os.getcwd(), "physics_cache", f"{prior_method}_{img_size}", path_hash)
+                local_cache_path = os.path.join(local_cache_dir, f"{stem}.npz")
+                
+                cache_path = None
+                if os.path.exists(dataset_cache_path):
+                    cache_path = dataset_cache_path
+                elif os.path.exists(local_cache_path):
+                    cache_path = local_cache_path
+                
+                if cache_path:
                     try:
                         cache_data = np.load(cache_path)
                         t_map = cache_data['t']
@@ -180,10 +194,10 @@ def _collate_train(batch, physics_mode: str, physics_extractor=None):
                 if files and isinstance(files[0], str) and files[0]:
                     img_path = files[0]
                     parent_dir = os.path.dirname(os.path.dirname(img_path))
-                    cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
-                    os.makedirs(cache_dir, exist_ok=True)
                     stem = os.path.splitext(os.path.basename(img_path))[0]
-                    cache_path = os.path.join(cache_dir, f"{stem}.npz")
+                    
+                    dataset_cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
+                    dataset_cache_path = os.path.join(dataset_cache_dir, f"{stem}.npz")
                     
                     try:
                         curr_extractor = physics_extractor
@@ -193,7 +207,19 @@ def _collate_train(batch, physics_mode: str, physics_extractor=None):
                         
                         img_np = inp[:3].permute(1, 2, 0).numpy().astype(np.float32)
                         t_map, b_map = curr_extractor(img_np)
-                        np.savez(cache_path, t=t_map.astype(np.float32), b=b_map.astype(np.float32))
+                        
+                        # Try to save next to dataset
+                        try:
+                            os.makedirs(dataset_cache_dir, exist_ok=True)
+                            np.savez(dataset_cache_path, t=t_map.astype(np.float32), b=b_map.astype(np.float32))
+                        except (OSError, IOError):
+                            # Read-only filesystem, fallback to local directory
+                            import hashlib
+                            path_hash = hashlib.md5(parent_dir.encode('utf-8')).hexdigest()
+                            local_cache_dir = os.path.join(os.getcwd(), "physics_cache", f"{prior_method}_{img_size}", path_hash)
+                            os.makedirs(local_cache_dir, exist_ok=True)
+                            local_cache_path = os.path.join(local_cache_dir, f"{stem}.npz")
+                            np.savez(local_cache_path, t=t_map.astype(np.float32), b=b_map.astype(np.float32))
                     except Exception:
                         pass
 
