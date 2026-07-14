@@ -140,6 +140,18 @@ def _collate_val(batch, physics_mode: str, physics_extractor=None):
     return _collate_train(batch, physics_mode, physics_extractor)
 
 
+class PhysicsCollate:
+    """Picklable collate callable for Windows spawn multiprocessing."""
+
+    def __init__(self, physics_mode: str, physics_extractor=None):
+        self.physics_mode = physics_mode
+        self.physics_extractor = physics_extractor
+
+    def __call__(self, batch):
+        return _collate_train(batch, self.physics_mode, self.physics_extractor)
+
+
+
 # ============================================================
 # EarlyStopping
 # ============================================================
@@ -347,11 +359,9 @@ def main():
     # ------------------------------------------------------------------
     # Datasets & DataLoaders
     # ------------------------------------------------------------------
-    def collate_fn_train(batch):
-        return _collate_train(batch, physics_mode, physics_extractor)
+    collate_fn_train = PhysicsCollate(physics_mode, physics_extractor)
+    collate_fn_val = PhysicsCollate(physics_mode, physics_extractor)
 
-    def collate_fn_val(batch):
-        return _collate_val(batch, physics_mode, physics_extractor)
 
     # Training dataset
     if args.dataset == "euvp":

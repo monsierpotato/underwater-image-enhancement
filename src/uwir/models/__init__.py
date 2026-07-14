@@ -6,6 +6,7 @@ __all__ = [
     "ALL_MODEL_NAMES",
     "ASPPUNet",
     "ContextUNet",
+    "DenseNetUNet",
     "MambaASPPUNet",
     "MambaBottleneckUNet",
     "MambaUNet",
@@ -22,6 +23,7 @@ __all__ = [
 _ARCHITECTURES = {
     "ASPPUNet": ("context_unet", "ASPPUNet"),
     "ContextUNet": ("context_unet", "ContextUNet"),
+    "DenseNetUNet": ("densenet_unet", "DenseNetUNet"),
     "MambaASPPUNet": ("context_unet", "MambaASPPUNet"),
     "MambaBottleneckUNet": ("context_unet", "MambaBottleneckUNet"),
     "MambaUNet": ("mamba_unet", "MambaUNet"),

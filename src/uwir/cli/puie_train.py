@@ -52,6 +52,7 @@ from torch.distributions import Independent, Normal, kl_divergence
 # it is guarded by `if __name__ == "__main__"`).
 from uwir.cli.train import (
     EarlyStopping,
+    PhysicsCollate,
     _collate_train,
     build_scheduler,
     load_ckpt,
@@ -383,8 +384,8 @@ def main():
     # ------------------------------------------------------------------
     # Datasets & DataLoaders  (physics channels appended in the collate)
     # ------------------------------------------------------------------
-    def collate_fn(batch):
-        return _collate_train(batch, physics_mode)
+    collate_fn = PhysicsCollate(physics_mode)
+
 
     if args.dataset == "euvp":
         train_ds = get_euvp_training_set(

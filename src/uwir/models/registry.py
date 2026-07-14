@@ -40,6 +40,7 @@ import torch.nn as nn
 
 _BACKBONES = (
     "unet",
+    "densenet",
     "asppunet",
     "mambabottleneck",
     "mambaaspp",
@@ -136,6 +137,11 @@ def build_model(name: str, pretrained_backbone: bool = True) -> nn.Module:
         from .unet import UNet5ch
 
         return UNet5ch(in_channels=in_channels)
+
+    if backbone == "densenet":
+        from .densenet_unet import DenseNetUNet
+
+        return DenseNetUNet(in_channels=in_channels)
 
     if backbone in {"asppunet", "mambabottleneck", "mambaaspp"}:
         from .context_unet import ASPPUNet, MambaASPPUNet, MambaBottleneckUNet

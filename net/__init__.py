@@ -3,6 +3,7 @@
 import _bootstrap  # noqa: F401
 from uwir.models import (
     ALL_MODEL_NAMES,
+    DenseNetUNet,
     MambaUNet,
     MambaVisionUNet,
     MobileNetUNet,
@@ -22,6 +23,7 @@ from uwir.physics import (
 
 __all__ = [
     "UNet5ch",
+    "DenseNetUNet",
     "ResNetUNet",
     "MobileNetUNet",
     "MambaVisionUNet",
