@@ -261,7 +261,7 @@ class DenseNetUNet(nn.Module):
         features: tuple[int, ...] = (32, 64, 128, 256),
         num_layers: int = 4,
         growth_rate: int = 12,
-        bn_size: int = 4,
+        bn_size: int = 2,
         bilinear: bool = True,
     ):
         super().__init__()
