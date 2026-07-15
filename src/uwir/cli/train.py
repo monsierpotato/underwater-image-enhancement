@@ -72,176 +72,24 @@ def _resolve_physics_extractor(prior_method: str):
     raise ValueError(f"Unknown --prior_method: {prior_method}")
 
 
-def _add_physics_channels(
-    rgb_tensor: torch.Tensor,
-    mode: str,
-    physics_extractor=None,
-) -> torch.Tensor:
-    """
-    Append physics-derived channels to an RGB tensor.
-
-    Args:
-        rgb_tensor (Tensor): (3, H, W) float32 in [0, 1].
-        mode       (str):    Which channels to append:
-                               ``"none"`` → return as-is           (3-ch)
-                               ``"t"``    → append t(x)            (4-ch)
-                               ``"b"``    → append B_map           (4-ch)
-                               ``"tb"``   → append t(x) and B_map  (5-ch)
-
-    Returns:
-        Tensor: (C_out, H, W) where C_out ∈ {3, 4, 5}.
-    """
-    if mode == "none":
-        return rgb_tensor
-
-    if physics_extractor is None:
-        from uwir.physics import compute_physics_maps
-
-        physics_extractor = compute_physics_maps
-
-    img_np = rgb_tensor.permute(1, 2, 0).numpy().astype(np.float32)
-    t_map, b_map = physics_extractor(img_np)
-
-    if mode == "t":
-        t_t = torch.from_numpy(t_map).unsqueeze(0)  # (1, H, W)
-        return torch.cat([rgb_tensor, t_t], dim=0)  # (4, H, W)
-
-    if mode == "b":
-        b_t = torch.from_numpy(b_map).unsqueeze(0)  # (1, H, W)
-        return torch.cat([rgb_tensor, b_t], dim=0)  # (4, H, W)
-
-    if mode == "tb":
-        t_t = torch.from_numpy(t_map).unsqueeze(0)  # (1, H, W)
-        b_t = torch.from_numpy(b_map).unsqueeze(0)  # (1, H, W)
-        return torch.cat([rgb_tensor, t_t, b_t], dim=0)  # (5, H, W)
-
-    raise ValueError(f"Unknown physics mode: '{mode}'")
-
-
-def _collate_train(batch, physics_mode: str, physics_extractor=None):
+def _collate_train(batch):
     """
     Custom collate that:
       - Drops the filename strings returned by the dataset.
-      - Appends physics channels according to ``physics_mode``.
-
-    Dataset items are (inp_tensor, gt_tensor, fname_in, fname_gt).
     """
     inps = []
     gts = []
-
-    # Infer prior_method from the extractor name
-    if physics_extractor is not None:
-        extractor_name = getattr(physics_extractor, "__name__", "")
-        if "gdcp" in extractor_name:
-            prior_method = "gdcp"
-        elif "gupdm" in extractor_name:
-            prior_method = "gupdm"
-        else:
-            prior_method = "udcp"
-    else:
-        prior_method = "udcp"
-
     for inp, gt, *files in batch:
-        if physics_mode != "none":
-            loaded_from_cache = False
-            img_size = inp.shape[-1]  # spatial dimension (H or W)
-            
-            if files and isinstance(files[0], str) and files[0]:
-                img_path = files[0]
-                parent_dir = os.path.dirname(os.path.dirname(img_path))
-                stem = os.path.splitext(os.path.basename(img_path))[0]
-                
-                # Check in dataset folder first
-                dataset_cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
-                dataset_cache_path = os.path.join(dataset_cache_dir, f"{stem}.npz")
-                
-                # Check in local working directory fallback folder
-                import hashlib
-                path_hash = hashlib.md5(parent_dir.encode('utf-8')).hexdigest()
-                local_cache_dir = os.path.join(os.getcwd(), "physics_cache", f"{prior_method}_{img_size}", path_hash)
-                local_cache_path = os.path.join(local_cache_dir, f"{stem}.npz")
-                
-                cache_path = None
-                if os.path.exists(dataset_cache_path):
-                    cache_path = dataset_cache_path
-                elif os.path.exists(local_cache_path):
-                    cache_path = local_cache_path
-                
-                if cache_path:
-                    try:
-                        cache_data = np.load(cache_path)
-                        t_map = cache_data['t']
-                        b_map = cache_data['b']
-                        
-                        t_t = torch.from_numpy(t_map).unsqueeze(0)  # (1, H, W)
-                        b_t = torch.from_numpy(b_map).unsqueeze(0)  # (1, H, W)
-                        
-                        if physics_mode == "t":
-                            inp = torch.cat([inp, t_t], dim=0)
-                        elif physics_mode == "b":
-                            inp = torch.cat([inp, b_t], dim=0)
-                        elif physics_mode == "tb":
-                            inp = torch.cat([inp, t_t, b_t], dim=0)
-                        loaded_from_cache = True
-                    except Exception:
-                        pass
-            
-            if not loaded_from_cache:
-                # Fallback to computing on the fly
-                inp = _add_physics_channels(inp, physics_mode, physics_extractor)
-                
-                # Save to cache
-                if files and isinstance(files[0], str) and files[0]:
-                    img_path = files[0]
-                    parent_dir = os.path.dirname(os.path.dirname(img_path))
-                    stem = os.path.splitext(os.path.basename(img_path))[0]
-                    
-                    dataset_cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
-                    dataset_cache_path = os.path.join(dataset_cache_dir, f"{stem}.npz")
-                    
-                    try:
-                        curr_extractor = physics_extractor
-                        if curr_extractor is None:
-                            from uwir.physics import compute_physics_maps
-                            curr_extractor = compute_physics_maps
-                        
-                        img_np = inp[:3].permute(1, 2, 0).numpy().astype(np.float32)
-                        t_map, b_map = curr_extractor(img_np)
-                        
-                        # Try to save next to dataset
-                        try:
-                            os.makedirs(dataset_cache_dir, exist_ok=True)
-                            np.savez(dataset_cache_path, t=t_map.astype(np.float32), b=b_map.astype(np.float32))
-                        except (OSError, IOError):
-                            # Read-only filesystem, fallback to local directory
-                            import hashlib
-                            path_hash = hashlib.md5(parent_dir.encode('utf-8')).hexdigest()
-                            local_cache_dir = os.path.join(os.getcwd(), "physics_cache", f"{prior_method}_{img_size}", path_hash)
-                            os.makedirs(local_cache_dir, exist_ok=True)
-                            local_cache_path = os.path.join(local_cache_dir, f"{stem}.npz")
-                            np.savez(local_cache_path, t=t_map.astype(np.float32), b=b_map.astype(np.float32))
-                    except Exception:
-                        pass
-
         inps.append(inp)
         gts.append(gt)
     return torch.stack(inps), torch.stack(gts)
 
 
-def _collate_val(batch, physics_mode: str, physics_extractor=None):
-    """Same as _collate_train but for validation paired datasets."""
-    return _collate_train(batch, physics_mode, physics_extractor)
-
-
 class PhysicsCollate:
     """Picklable collate callable for Windows spawn multiprocessing."""
 
-    def __init__(self, physics_mode: str, physics_extractor=None):
-        self.physics_mode = physics_mode
-        self.physics_extractor = physics_extractor
-
     def __call__(self, batch):
-        return _collate_train(batch, self.physics_mode, self.physics_extractor)
+        return _collate_train(batch)
 
 
 
@@ -452,8 +300,8 @@ def main():
     # ------------------------------------------------------------------
     # Datasets & DataLoaders
     # ------------------------------------------------------------------
-    collate_fn_train = PhysicsCollate(physics_mode, physics_extractor)
-    collate_fn_val = PhysicsCollate(physics_mode, physics_extractor)
+    collate_fn_train = PhysicsCollate()
+    collate_fn_val = PhysicsCollate()
 
 
     # Training dataset
@@ -463,14 +311,16 @@ def main():
             img_size=args.cropSize,
             subset=args.euvp_subset,
             in_memory=args.in_memory,
+            physics_mode=physics_mode,
+            prior_method=args.prior_method,
         )
     elif args.dataset == "uieb":
         train_ds = get_uieb_training_set(
-            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory
+            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory, physics_mode=physics_mode, prior_method=args.prior_method
         )
     elif args.dataset == "ufo120":
         train_ds = get_ufo120_training_set(
-            args.data_train_euvp, img_size=args.cropSize, in_memory=args.in_memory
+            args.data_train_euvp, img_size=args.cropSize, in_memory=args.in_memory, physics_mode=physics_mode, prior_method=args.prior_method
         )
     elif args.dataset == "euvp+uieb":
         euvp_ds = get_euvp_training_set(
@@ -478,9 +328,11 @@ def main():
             img_size=args.cropSize,
             subset=args.euvp_subset,
             in_memory=args.in_memory,
+            physics_mode=physics_mode,
+            prior_method=args.prior_method,
         )
         uieb_ds = get_uieb_training_set(
-            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory
+            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory, physics_mode=physics_mode, prior_method=args.prior_method
         )
         train_ds = data.ConcatDataset([euvp_ds, uieb_ds])
     else:

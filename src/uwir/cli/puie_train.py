@@ -382,9 +382,9 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # Datasets & DataLoaders  (physics channels appended in the collate)
+    # Datasets & DataLoaders
     # ------------------------------------------------------------------
-    collate_fn = PhysicsCollate(physics_mode)
+    collate_fn = PhysicsCollate()
 
 
     if args.dataset == "euvp":
@@ -393,14 +393,16 @@ def main():
             img_size=args.cropSize,
             subset=args.euvp_subset,
             in_memory=args.in_memory,
+            physics_mode=physics_mode,
+            prior_method=args.prior_method,
         )
     elif args.dataset == "uieb":
         train_ds = get_uieb_training_set(
-            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory
+            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory, physics_mode=physics_mode, prior_method=args.prior_method
         )
     elif args.dataset == "ufo120":
         train_ds = get_ufo120_training_set(
-            args.data_train_euvp, img_size=args.cropSize, in_memory=args.in_memory
+            args.data_train_euvp, img_size=args.cropSize, in_memory=args.in_memory, physics_mode=physics_mode, prior_method=args.prior_method
         )
     elif args.dataset == "euvp+uieb":
         euvp_ds = get_euvp_training_set(
@@ -408,9 +410,11 @@ def main():
             img_size=args.cropSize,
             subset=args.euvp_subset,
             in_memory=args.in_memory,
+            physics_mode=physics_mode,
+            prior_method=args.prior_method,
         )
         uieb_ds = get_uieb_training_set(
-            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory
+            args.data_train_uieb, img_size=args.cropSize, in_memory=args.in_memory, physics_mode=physics_mode, prior_method=args.prior_method
         )
         train_ds = data.ConcatDataset([euvp_ds, uieb_ds])
     else:

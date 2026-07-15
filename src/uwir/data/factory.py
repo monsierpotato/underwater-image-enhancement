@@ -47,7 +47,7 @@ def _eval_transform():
 
 
 def get_euvp_training_set(
-    data_dir: str, img_size: int = 256, subset: str = "all", in_memory: bool = False
+    data_dir: str, img_size: int = 256, subset: str = "all", in_memory: bool = False, physics_mode: str = "none", prior_method: str = "gupdm"
 ) -> EUVPDataset:
     """
     Primary training corpus.
@@ -66,11 +66,14 @@ def get_euvp_training_set(
         transform=_train_transform(img_size),
         augment=True,
         in_memory=in_memory,
+        physics_mode=physics_mode,
+        prior_method=prior_method,
+        img_size=img_size,
     )
 
 
 def get_uieb_training_set(
-    data_dir: str, img_size: int = 256, in_memory: bool = False
+    data_dir: str, img_size: int = 256, in_memory: bool = False, physics_mode: str = "none", prior_method: str = "gupdm"
 ) -> UIEBDataset:
     """
     UIEB training split (800 pairs by convention).
@@ -81,12 +84,12 @@ def get_uieb_training_set(
         in_memory : Load images into RAM during initialization.
     """
     return UIEBDataset(
-        data_dir, transform=_train_transform(img_size), augment=True, in_memory=in_memory
+        data_dir, transform=_train_transform(img_size), augment=True, in_memory=in_memory, physics_mode=physics_mode, prior_method=prior_method, img_size=img_size
     )
 
 
 def get_ufo120_training_set(
-    data_dir: str, img_size: int = 256, in_memory: bool = False
+    data_dir: str, img_size: int = 256, in_memory: bool = False, physics_mode: str = "none", prior_method: str = "gupdm"
 ) -> UFO120Dataset:
     """
     UFO-120 training split (1 500 high-res AUV pairs).
@@ -102,6 +105,9 @@ def get_ufo120_training_set(
         transform=_train_transform(img_size),
         augment=True,
         in_memory=in_memory,
+        physics_mode=physics_mode,
+        prior_method=prior_method,
+        img_size=img_size,
     )
 
 
