@@ -122,7 +122,7 @@ class DenseBlock(nn.Module):
         in_ch: int,
         out_ch: int,
         num_layers: int = 4,
-        growth_rate: int = 32,
+        growth_rate: int = 64,
         bn_size: int = 4,
         dropout: float = 0.0,
     ):
