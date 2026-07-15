@@ -258,9 +258,9 @@ class DenseNetUNet(nn.Module):
         self,
         in_channels: int = 5,
         out_channels: int = 3,
-        features: tuple[int, ...] = (64, 128, 256, 512),
+        features: tuple[int, ...] = (32, 64, 128, 256),
         num_layers: int = 4,
-        growth_rate: int = 16,
+        growth_rate: int = 12,
         bn_size: int = 4,
         bilinear: bool = True,
     ):
