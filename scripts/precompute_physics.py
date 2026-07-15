@@ -16,8 +16,15 @@ def process_image(args):
     img_path, prior_method, img_size = args
     parent_dir = os.path.dirname(os.path.dirname(img_path))
     cache_dir = os.path.join(parent_dir, f"physics_cache_{prior_method}_{img_size}")
-    os.makedirs(cache_dir, exist_ok=True)
     
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError:
+        import hashlib
+        path_hash = hashlib.md5(parent_dir.encode('utf-8')).hexdigest()
+        cache_dir = os.path.join(os.getcwd(), "physics_cache", f"{prior_method}_{img_size}", path_hash)
+        os.makedirs(cache_dir, exist_ok=True)
+        
     stem = os.path.splitext(os.path.basename(img_path))[0]
     out_path = os.path.join(cache_dir, f"{stem}.npz")
     

@@ -37,6 +37,12 @@ def _append_physics_channels(img_in, file_in, physics_mode, prior_method, img_si
     stem = os.path.splitext(os.path.basename(file_in))[0]
     cache_path = os.path.join(cache_dir, f"{stem}.npz")
     
+    if not os.path.exists(cache_path):
+        import hashlib
+        path_hash = hashlib.md5(parent_dir.encode('utf-8')).hexdigest()
+        local_cache_dir = os.path.join(os.getcwd(), "physics_cache", f"{prior_method}_{img_size}", path_hash)
+        cache_path = os.path.join(local_cache_dir, f"{stem}.npz")
+        
     if os.path.exists(cache_path):
         data = np.load(cache_path)
         t = torch.from_numpy(data['t']).unsqueeze(0)
