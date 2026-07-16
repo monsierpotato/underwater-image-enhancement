@@ -260,7 +260,7 @@ class DenseNetUNet(nn.Module):
         out_channels: int = 3,
         features: tuple[int, ...] = (32, 64, 128, 256),
         num_layers: int = 4,
-        growth_rate: int = 64,
+        growth_rate: int = 32,
         bn_size: int = 2,
         bilinear: bool = True,
     ):
